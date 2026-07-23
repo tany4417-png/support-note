@@ -53,7 +53,9 @@ export async function notifySyncEvents(
     for (const sub of subs) {
       const res = await send(sub, payload).catch(() => ({ ok: false as const, status: 0 }));
       if (!res.ok && (res.status === 404 || res.status === 410)) {
-        await db.prepare("DELETE FROM push_subscriptions WHERE id=?").bind(sub.id).run();
+        // DELETE自体の失敗（D1の一時エラー等）でループを中断させない。消し損ねた行は
+        // 次回以降の送信失敗時に再度DELETEが試みられるため、ここでは握りつぶして継続する
+        await db.prepare("DELETE FROM push_subscriptions WHERE id=?").bind(sub.id).run().catch(() => {});
       }
       // 404/410以外の失敗は無視する（再送なし）。1件の失敗が他の送信・tickの完走を止めない
     }

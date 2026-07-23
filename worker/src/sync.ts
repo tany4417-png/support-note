@@ -29,7 +29,7 @@ export async function upsertNote(db: D1Database, n: NoteRecord): Promise<UpsertR
   return (res.meta.changes ?? 0) > 0 ? "applied" : "stale";
 }
 
-export type PriorNoteState = { answered: 0 | 1; deleted: 0 | 1 };
+export type PriorNoteState = { answered: 0 | 1 };
 
 // 新着通知/対応済み通知のためのイベント判定。同期セマンティクス（LWW等）には関与せず、
 // upsertNote適用結果とupsert前の状態(prior)を観察するだけの純粋関数。
@@ -143,7 +143,7 @@ export async function handleSync(req: Request, env: Env, ctx: ExecutionContext):
   const events: SyncEvents = { created: [], answeredDone: [] };
   for (const n of body.notes ?? []) {
     // upsert前の状態を読んでおく（新着/対応済み遷移の判定用。upsert自体はここでは何も参照しない）
-    const prior = await env.DB.prepare(`SELECT answered, deleted FROM notes WHERE id=?1`)
+    const prior = await env.DB.prepare(`SELECT answered FROM notes WHERE id=?1`)
       .bind(n.id).first<PriorNoteState>();
     const result = await upsertNote(env.DB, n);
     if (result === "purged") { purgedIds.push(n.id); continue; }

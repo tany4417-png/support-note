@@ -508,4 +508,33 @@ describe("runSync selfEndpoint（同期時サーバープッシュの本人除�
       vi.unstubAllGlobals();
     }
   });
+
+  it("serviceWorker.readyが解決しないまま(SWがactiveにならない環境)でも2秒でタイムアウトし、selfEndpoint: nullで完走する", async () => {
+    // navigator.serviceWorker.readyは仕様上reject しない。SWが永久にactiveにならない環境では
+    // 無限pendingし得るため、Promise.raceによる2秒タイムアウトでrunSync全体が止まらないことを確認する
+    await db.meta.put({ key: "fullResyncV4", value: 1 });
+    await createNote("a");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.stubGlobal("navigator", {
+      serviceWorker: {
+        ready: new Promise(() => {}), // 永久に解決しないPromise
+      },
+    });
+    try {
+      const { f, calls } = okFetch();
+      const resultPromise = runSync("tok", f);
+      // 2秒分だけ仮想時間を進めてgetSelfEndpoint内のタイムアウトを確定的に発火させたあと、
+      // 実タイマーに戻す。Dexie（fake-indexeddb）はsetTimeout(fn,0)に依存する内部フォールバック経路を
+      // 持つため、フェイクタイマーのまま以降のDB操作までawaitすると別の待機で無限pendingし得る
+      await vi.advanceTimersByTimeAsync(2000);
+      vi.useRealTimers();
+      const result = await resultPromise;
+      expect(result.pushed).toBe(1);
+      const body = JSON.parse(String(calls[0].init.body));
+      expect(body.selfEndpoint).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
 });

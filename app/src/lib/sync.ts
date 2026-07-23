@@ -4,12 +4,22 @@ import type { AttachmentMeta, Folder, Note, SyncResponse } from "./types";
 
 export type SyncResult = { pushed: number; pulled: number; failedAttachments: number };
 
+// navigator.serviceWorker.readyは仕様上rejectしない。SWが何らかの理由で永久にactiveにならない
+// 環境では無限pendingし得るため、この時間で見切りをつける（runSyncの直前でawaitしており、
+// ここが詰まると同期全体が止まるため）
+const SELF_ENDPOINT_TIMEOUT_MS = 2000;
+
 // 同期時サーバープッシュ通知の送信対象から自分自身の端末を除外するための購読endpoint。
-// 未対応環境・未購読・取得失敗（例外）はすべてnullを返す。取得失敗でsync自体を壊さないためtry/catchで握る
+// 未対応環境・未購読・取得失敗（例外）・タイムアウトはすべてnullを返す。
+// 取得失敗でsync自体を壊さないためtry/catchで握る
 async function getSelfEndpoint(): Promise<string | null> {
   try {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return null;
-    const reg = await navigator.serviceWorker.ready;
+    const reg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), SELF_ENDPOINT_TIMEOUT_MS)),
+    ]);
+    if (!reg) return null;
     const sub = await reg.pushManager.getSubscription();
     return sub?.endpoint ?? null;
   } catch {

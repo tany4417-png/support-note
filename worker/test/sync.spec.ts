@@ -370,27 +370,35 @@ describe("classifySyncEvent（新着/対応済み通知イベントの判定）"
 
   it("既存メモの本文だけの編集（answered不変）は通知しない", () => {
     // brief Step1 (4): 本文だけの編集では届かない
-    const prior = { answered: 0 as const, deleted: 0 as const };
+    const prior = { answered: 0 as const };
     expect(classifySyncEvent(prior, "applied", n({ body: "編集後の本文" }))).toBeNull();
   });
 
   it("prior.answered=0 かつ n.answered=1 かつ applied は answeredDone", () => {
-    const prior = { answered: 0 as const, deleted: 0 as const };
+    const prior = { answered: 0 as const };
     expect(classifySyncEvent(prior, "applied", n({ answered: 1 }))).toBe("answeredDone");
   });
 
+  it("n.answeredがundefined（answeredフィールド自体を持たない旧クライアント相当のpush）はanansweredDoneに分類されない", () => {
+    // 旧クライアントはansweredフィールド自体を送らないことがある（upsertNoteはこの場合answeredを
+    // 現状維持する）。n.answered === 1 の厳密一致判定により、undefinedはfalseとなり誤分類されないことを確認する
+    const prior = { answered: 0 as const };
+    const { answered: _omit, ...legacyNote } = n();
+    expect(classifySyncEvent(prior, "applied", legacyNote)).toBeNull();
+  });
+
   it("既に対応済み(answered=1)のメモをそのまま編集しても通知しない", () => {
-    const prior = { answered: 1 as const, deleted: 0 as const };
+    const prior = { answered: 1 as const };
     expect(classifySyncEvent(prior, "applied", n({ answered: 1, body: "編集" }))).toBeNull();
   });
 
   it("対応済みから未対応へ戻す変更は通知しない（対応済み遷移ではない）", () => {
-    const prior = { answered: 1 as const, deleted: 0 as const };
+    const prior = { answered: 1 as const };
     expect(classifySyncEvent(prior, "applied", n({ answered: 0 }))).toBeNull();
   });
 
   it("対応済み遷移でもLWW負け(stale)なら通知しない", () => {
-    const prior = { answered: 0 as const, deleted: 0 as const };
+    const prior = { answered: 0 as const };
     expect(classifySyncEvent(prior, "stale", n({ answered: 1 }))).toBeNull();
   });
 });

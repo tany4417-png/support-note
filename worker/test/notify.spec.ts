@@ -115,6 +115,27 @@ describe("notifySyncEvents", () => {
     expect(await subExists("s1")).toBe(false);
   });
 
+  it("404/410後のDELETEが例外を投げても他の購読への送信は止まらない", async () => {
+    // DELETE FROM push_subscriptionsだけ例外を投げるfake D1（SELECTは実DBに委譲）。
+    // ループが1件目のDELETE例外で中断せず、2件目のsendまで到達することを確認する
+    await addSub("s1");
+    await addSub("s2");
+    const { send, calls } = recordingSender({ ok: false, status: 410 });
+    const events: SyncEvents = { created: [{ id: "n1", author: null, body: "x" }], answeredDone: [] };
+    const throwingDeleteDb = {
+      prepare(query: string) {
+        if (query.startsWith("DELETE FROM push_subscriptions")) {
+          return { bind: () => ({ run: async () => { throw new Error("delete boom"); } }) };
+        }
+        return env.DB.prepare(query);
+      },
+    } as unknown as D1Database;
+
+    await expect(notifySyncEvents(throwingDeleteDb, send, events, null)).resolves.toBeUndefined();
+
+    expect(calls.map((c) => c.sub.id).sort()).toEqual(["s1", "s2"]);
+  });
+
   it("404/410以外の失敗は購読を残し、他の購読への送信も続く", async () => {
     await addSub("s1");
     await addSub("s2");
