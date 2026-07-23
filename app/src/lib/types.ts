@@ -9,6 +9,10 @@ export type Note = {
   folderId: string | null;
   // 手動並べ替え用の順序キー。null=未設定（旧データ・新規作成直後）。任意欄はfolderId導入前の既存Dexieレコードとの互換のため
   orderKey?: number | null;
+  // メモに表示する投稿者名（記名）。createNoteが作成時点のgetUserName()を設定する。未設定端末での作成はnull
+  author: string | null;
+  // 対応済みフラグ（Task 5用）。既定は0
+  answered: 0 | 1;
 };
 
 export type AttachmentMeta = {

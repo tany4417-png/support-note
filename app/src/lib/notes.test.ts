@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db, resetDbForTests } from "./db";
 import { createFolder } from "./folders";
+import * as profile from "./profile";
 import {
   createNote,
   discardIfEmptyNew,
@@ -15,6 +16,10 @@ import {
 
 beforeEach(async () => {
   await resetDbForTests();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("メモCRUD", () => {
@@ -35,6 +40,25 @@ describe("メモCRUD", () => {
   it("folderIdを指定して作成できる", async () => {
     const n = await createNote("body", "FOLDER1");
     expect(n.folderId).toBe("FOLDER1");
+  });
+
+  it("設定済みの名前が新規メモのauthorになる", async () => {
+    vi.spyOn(profile, "getUserName").mockReturnValue("大谷");
+    const n = await createNote("body");
+    expect(n.author).toBe("大谷");
+  });
+
+  it("名前未設定ならauthorはnull", async () => {
+    vi.spyOn(profile, "getUserName").mockReturnValue(null);
+    const n = await createNote("body");
+    expect(n.author).toBeNull();
+  });
+
+  it("localStorage非対応環境（このファイルはnode環境で実行）でも例外にならずauthorはnull", async () => {
+    // profileをモックせず本物のgetUserNameを通す。node環境にはlocalStorageが無いため、
+    // ここが例外にならないことがgetUserName側の防御コードの回帰テストになる
+    const n = await createNote("body");
+    expect(n.author).toBeNull();
   });
 
   it("updateNoteでfolderIdを変更できる", async () => {

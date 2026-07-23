@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { collectDiagnostics, type Diagnostics } from "../lib/diagnostics";
 import { disablePush, ensurePushSubscription, isPushEnabled, sendTestPush } from "../lib/push";
+import { getUserName, setUserName } from "../lib/profile";
 import { BackIcon, ExportIcon, TrashIcon } from "./icons";
 
 // 診断パネルの表示・コピー用にテキスト整形する（コンポーネント専用の純関数のため単体テストは設けていない。
@@ -33,6 +34,8 @@ type Props = {
 
 export function Settings({ syncBar, slideClass, token, onSave, onBack, onExport, onTrash }: Props) {
   const [value, setValue] = useState(token);
+  // 記名（メモに表示する投稿者名）。App側のstateを介さずprofile.tsを直接読み書きする（NameGateと同じ流儀）
+  const [name, setName] = useState(() => getUserName() ?? "");
   const diagnostics = useLiveQuery(collectDiagnostics, [], null);
   const [pushOn, setPushOn] = useState(false);
   const [pushMsg, setPushMsg] = useState("");
@@ -68,6 +71,19 @@ export function Settings({ syncBar, slideClass, token, onSave, onBack, onExport,
           <label htmlFor="token">APIトークン</label>
           <input id="token" type="password" value={value} onChange={(e) => setValue(e.target.value)} />
           <button className="primary" onClick={() => onSave(value.trim())}>保存</button>
+          <label htmlFor="userName">名前（メモに表示されます）</label>
+          <input id="userName" value={name} onChange={(e) => setName(e.target.value)} />
+          <button
+            className="primary"
+            onClick={() => {
+              const trimmed = name.trim();
+              if (!trimmed) return;
+              setUserName(trimmed);
+              setName(trimmed);
+            }}
+          >
+            保存
+          </button>
           <hr />
           <button className="tint acc-teal" onClick={onExport}>
             <ExportIcon size={18} />

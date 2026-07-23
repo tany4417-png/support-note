@@ -186,7 +186,10 @@ export function NoteList(p: Props) {
                     );
                   })()}
                 <CardThumbs noteId={n.id} />
-                <div className="card-sub">{new Date(n.updatedAt).toLocaleString("ja-JP")}</div>
+                <div className="card-sub">
+                  {new Date(n.updatedAt).toLocaleString("ja-JP")}
+                  {n.author && <span className="card-author">{n.author}</span>}
+                </div>
               </SwipeableCard>
             ))}
             {p.notes.length === 0 && (

@@ -50,15 +50,51 @@ describe("runSync", () => {
     expect((calls[0].init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
   });
 
+  it("dirtyなメモのauthor/answeredが送信ボディに含まれる", async () => {
+    await db.meta.put({ key: "fullResyncV4", value: 1 });
+    const a = await createNote("記名メモ");
+    await db.notes.update(a.id, { author: "山田", answered: 1 as const });
+    const { f, calls } = okFetch();
+    await runSync("tok", f);
+    const body = JSON.parse(String(calls[0].init.body));
+    expect(body.notes[0].author).toBe("山田");
+    expect(body.notes[0].answered).toBe(1);
+  });
+
+  it("受信したauthor/answeredがローカルに適用される", async () => {
+    const incoming = {
+      id: "REMOTEAUTHOR", body: "r", importance: 0 as const, createdAt: 1, updatedAt: 1, deleted: 0 as const,
+      folderId: null, author: "鈴木", answered: 1 as const,
+    };
+    const { f } = okFetch({ notes: [incoming] });
+    await runSync("tok", f);
+    const cur = await db.notes.get("REMOTEAUTHOR");
+    expect(cur?.author).toBe("鈴木");
+    expect(cur?.answered).toBe(1);
+  });
+
+  it("受信データにauthor/answeredが無くても既定値(null/0)で保存される", async () => {
+    // 旧サーバー応答（author/answered導入前）を模す。型を意図的にバイパスしてフィールド欠落を再現する
+    const incoming = {
+      id: "REMOTENOAUTHOR", body: "r", importance: 0 as const, createdAt: 1, updatedAt: 1, deleted: 0 as const,
+      folderId: null,
+    };
+    const { f } = okFetch({ notes: [incoming] as unknown as SyncResponse["notes"] });
+    await runSync("tok", f);
+    const cur = await db.notes.get("REMOTENOAUTHOR");
+    expect(cur?.author).toBeNull();
+    expect(cur?.answered).toBe(0);
+  });
+
   it("受信は新しい方だけ適用する（LWW）", async () => {
     const a = await createNote("local");
     const incomingNew = {
       id: "REMOTE1", body: "r", importance: 0 as const, createdAt: 1, updatedAt: 1, deleted: 0 as const,
-      folderId: null,
+      folderId: null, author: null, answered: 0 as const,
     };
     const incomingOld = {
       id: a.id, body: "stale", importance: 0 as const, createdAt: 1, updatedAt: a.updatedAt - 1, deleted: 0 as const,
-      folderId: null,
+      folderId: null, author: null, answered: 0 as const,
     };
     const { f } = okFetch({ notes: [incomingNew, incomingOld] });
     const result = await runSync("tok", f);
@@ -82,6 +118,8 @@ describe("runSync", () => {
       updatedAt: a.updatedAt, // 同一updatedAt
       deleted: 0 as const,
       folderId: "FOLDER-X",
+      author: null,
+      answered: 0 as const,
     };
     const { f } = okFetch({ notes: [incomingSameTime] });
     await runSync("tok", f);
@@ -125,6 +163,8 @@ describe("runSync", () => {
       updatedAt: a.updatedAt,
       deleted: a.deleted,
       folderId: a.folderId,
+      author: a.author,
+      answered: a.answered,
     };
     const { f } = okFetch({ notes: [echoBack] });
 

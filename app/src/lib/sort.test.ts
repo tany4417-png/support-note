@@ -5,6 +5,7 @@ import { searchNotes, sortNotes } from "./sort";
 function n(id: string, over: Partial<Note> = {}): Note {
   return {
     id, body: id, importance: 0, createdAt: 0, updatedAt: 0, deleted: 0, dirty: 0, folderId: null,
+    author: null, answered: 0,
     ...over,
   };
 }

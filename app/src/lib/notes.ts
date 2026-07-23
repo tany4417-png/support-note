@@ -1,6 +1,7 @@
 import { ulid } from "ulid";
 import { db } from "./db";
 import { thumbKey } from "./attachments";
+import { getUserName } from "./profile";
 import type { Note } from "./types";
 
 export type NotePatch = Partial<
@@ -11,6 +12,7 @@ export async function createNote(body = "", folderId: string | null = null): Pro
   const now = Date.now();
   const n: Note = {
     id: ulid(), body, importance: 0, createdAt: now, updatedAt: now, deleted: 0, dirty: 1, folderId, orderKey: null,
+    author: getUserName(), answered: 0,
   };
   await db.notes.put(n);
   return n;

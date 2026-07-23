@@ -111,6 +111,8 @@ export async function runSync(
           ...n,
           folderId: n.folderId ?? null,
           orderKey: n.orderKey ?? null,
+          author: n.author ?? null,
+          answered: n.answered ?? 0,
           dirty: 0,
         });
     }

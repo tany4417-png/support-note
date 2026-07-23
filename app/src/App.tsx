@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
+import { NameGate } from "./components/NameGate";
 import { NoteList } from "./components/NoteList";
 import { NoteScreen } from "./components/NoteScreen";
 import { Settings } from "./components/Settings";
@@ -28,6 +29,7 @@ import {
 import { shouldCompleteBack } from "./lib/gesture";
 import { saveToken } from "./lib/invite";
 import { createNote, discardIfEmptyNew, listActiveNotes, purgeExpiredTrashLocal, restoreNote, softDeleteNote, sweepEmptyNewNotes, updateNote, type NotePatch } from "./lib/notes";
+import { getUserName } from "./lib/profile";
 import type { ReorderPlan } from "./lib/reorder";
 import { searchNotes, sortNotes, type SortMode } from "./lib/sort";
 import { runSync } from "./lib/sync";
@@ -59,6 +61,8 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [token, setToken] = useState(() => localStorage.getItem("supportnote.token") ?? "");
+  // 記名（メモに表示する投稿者名）。未設定の間はNameGateだけを描画する（下のreturn分岐参照）
+  const [userName, setUserNameState] = useState(() => getUserName());
   const [status, setStatus] = useState<"idle" | "syncing" | "offline" | "error">("idle");
   const [lastSync, setLastSync] = useState<number | null>(null);
   // 直近のrunSyncで失敗した添付PUTの件数。0より大きい間はSyncStatusのラベルに「次回再送」の注記を出す
@@ -745,6 +749,12 @@ export default function App() {
   // navDirectionに応じたスライドイン方向のクラス（戻り=左から、進み=右から）。
   // バックスワイプ完了時（suppressSlideIn）はドラッグ自体が遷移の動きなので、このクラスは付けない（Fix3）
   const slideClass = suppressSlideIn ? "" : navDirection === "back" ? "slide-in-left" : "slide-in-right";
+
+  // 名前未設定の端末は、通常UIより先に全画面のNameGateだけを描画する。保存後はonDoneでローカルstateを
+  // 更新し、以降のcreateNote呼び出しがgetUserName()経由で設定済みの名前をauthorに使えるようにする
+  if (!userName) {
+    return <NameGate onDone={() => setUserNameState(getUserName())} />;
+  }
 
   return (
     <main
