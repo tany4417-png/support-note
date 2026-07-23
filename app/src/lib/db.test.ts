@@ -27,7 +27,7 @@ function openV2(name: string) {
 
 describe("Dexie version(2) アップグレード", () => {
   it("既存のv1 notesレコードを保持したままfolderId=nullを付与する", async () => {
-    const name = "tanimemo-upgrade-test";
+    const name = "supportnote-upgrade-test";
     await Dexie.delete(name);
 
     const v1 = new Dexie(name);
@@ -66,7 +66,7 @@ describe("Dexie version(2) アップグレード", () => {
     // 既にfolderIdの実データが入っていることがある。以前は modify({ folderId: null })
     // が無条件適用され、updatedAtは変えないままこの実データをnullで踏みつぶし、
     // サーバーと「同時刻・別内容」の膠着を引き起こしていた
-    const name = "tanimemo-upgrade-test-2";
+    const name = "supportnote-upgrade-test-2";
     await Dexie.delete(name);
 
     const v1 = new Dexie(name);

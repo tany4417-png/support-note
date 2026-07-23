@@ -19,7 +19,7 @@ export async function migrateNotesFolderId(tx: Transaction): Promise<void> {
     });
 }
 
-export class TanimemoDB extends Dexie {
+export class SupportNoteDB extends Dexie {
   notes!: Table<Note, string>;
   attachments!: Table<AttachmentMeta, string>;
   attachmentBlobs!: Table<AttachmentBlobRow, string>;
@@ -28,7 +28,7 @@ export class TanimemoDB extends Dexie {
   unread!: Table<UnreadRow, string>;
 
   constructor() {
-    super("tanimemo");
+    super("supportnote");
     this.version(1).stores({
       notes: "id, updatedAt, createdAt, importance, dirty",
       attachments: "id, noteId, updatedAt, dirty",
@@ -55,7 +55,7 @@ export class TanimemoDB extends Dexie {
   }
 }
 
-export const db = new TanimemoDB();
+export const db = new SupportNoteDB();
 
 export async function resetDbForTests(): Promise<void> {
   await Promise.all(db.tables.map((t) => t.clear()));

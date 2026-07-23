@@ -15,8 +15,8 @@ export default defineConfig({
       filename: "sw.ts",
       includeAssets: ["apple-touch-icon.png"],
       manifest: {
-        name: "タニメモ",
-        short_name: "タニメモ",
+        name: "サポートノート",
+        short_name: "サポートノート",
         lang: "ja",
         start_url: "/",
         display: "standalone",

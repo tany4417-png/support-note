@@ -54,14 +54,14 @@ export default function App() {
   // slide-inアニメを再生しない（Fix3）。ボタン・パンくず経由の「戻る」や通常の進み操作では
   // 遷移のたびに毎回falseへ明示的に戻すため、専用のリセット処理は不要
   const [suppressSlideIn, setSuppressSlideIn] = useState(false);
-  const [sort, setSortState] = useState<SortMode>(() => (localStorage.getItem("tanimemo.sort") as SortMode) ?? "created");
+  const [sort, setSortState] = useState<SortMode>(() => (localStorage.getItem("supportnote.sort") as SortMode) ?? "created");
   const setSort = (m: SortMode) => {
-    localStorage.setItem("tanimemo.sort", m);
+    localStorage.setItem("supportnote.sort", m);
     setSortState(m);
   };
   const [query, setQuery] = useState("");
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
-  const [token, setToken] = useState(() => localStorage.getItem("tanimemo.token") ?? "");
+  const [token, setToken] = useState(() => localStorage.getItem("supportnote.token") ?? "");
   const [status, setStatus] = useState<"idle" | "syncing" | "offline" | "error">("idle");
   const [lastSync, setLastSync] = useState<number | null>(null);
   // 直近のrunSyncで失敗した添付PUTの件数。0より大きい間はSyncStatusのラベルに「次回再送」の注記を出す
@@ -311,7 +311,7 @@ export default function App() {
       if (document.visibilityState !== "visible") return;
       if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
       if (await isPushEnabled()) {
-        const t = localStorage.getItem("tanimemo.token") ?? "";
+        const t = localStorage.getItem("supportnote.token") ?? "";
         if (t) ensurePushSubscription(t).catch(() => {});
       }
     };
@@ -894,7 +894,7 @@ export default function App() {
             }
             const a = document.createElement("a");
             a.href = URL.createObjectURL(blob);
-            a.download = `タニメモ-エクスポート-${localYmd(new Date())}.zip`;
+            a.download = `サポートノート-エクスポート-${localYmd(new Date())}.zip`;
             a.click();
             URL.revokeObjectURL(a.href);
           }}

@@ -2,8 +2,8 @@
 // iOSは「ホーム画面に追加」したPWAとSafariで保存領域が別々になり、localStorageは
 // 引き継がれない。両者で共有されるCache Storageにも書いておき、PWA初回起動時に
 // localStorageが空ならCacheから引き継ぐ。
-const TOKEN_KEY = "tanimemo.token";
-const CACHE_NAME = "tanimemo-invite";
+const TOKEN_KEY = "supportnote.token";
+const CACHE_NAME = "supportnote-invite";
 const CACHE_URL = "/__invite-token";
 
 export function parseSetupHash(hash: string): string | null {

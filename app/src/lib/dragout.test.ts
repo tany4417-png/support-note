@@ -3,8 +3,8 @@ import { downloadUrlSpec } from "./dragout";
 
 describe("downloadUrlSpec", () => {
   it("mime・ファイル名・URLをコロン区切りで組み立てる", () => {
-    expect(downloadUrlSpec("image/png", "タニメモ-画像-abc123.png", "blob:http://localhost/xyz")).toBe(
-      "image/png:タニメモ-画像-abc123.png:blob:http://localhost/xyz"
+    expect(downloadUrlSpec("image/png", "サポートノート-画像-abc123.png", "blob:http://localhost/xyz")).toBe(
+      "image/png:サポートノート-画像-abc123.png:blob:http://localhost/xyz"
     );
   });
 

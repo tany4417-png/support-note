@@ -18,8 +18,8 @@ registerRoute(new NavigationRoute(createHandlerBoundToURL("index.html")));
 self.addEventListener("push", (event) => {
   // 必ず通知を表示する（表示しないpushが続くとiOSは購読を打ち切る）。parse失敗もフォールバック表示。
   // bodyはworkerが本文2行目以降の抜粋を入れてくる。無ければbody無し通知
-  // （旧固定文言「タニメモのリマインダー」はiOSが自動表示するアプリ名と重複するため廃止）
-  let title = "タニメモ";
+  // （旧固定文言「サポートノートのリマインダー」はiOSが自動表示するアプリ名と重複するため廃止）
+  let title = "サポートノート";
   let body: string | undefined;
   let noteId: string | undefined;
   try {

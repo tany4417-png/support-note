@@ -23,7 +23,7 @@ export function useAttachmentUrls(
     let alive = true;
     const created: string[] = [];
     void (async () => {
-      const token = localStorage.getItem("tanimemo.token") ?? "";
+      const token = localStorage.getItem("supportnote.token") ?? "";
       const next: Record<string, string> = {};
       for (const m of metas) {
         const blob = await getImageBlob(m.id, token, undefined, { thumb });

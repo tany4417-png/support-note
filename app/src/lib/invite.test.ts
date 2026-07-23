@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyInviteOnBoot, parseSetupHash, saveToken, watchInviteHash } from "./invite";
 
-const TOKEN_KEY = "tanimemo.token";
-const CACHE_NAME = "tanimemo-invite";
+const TOKEN_KEY = "supportnote.token";
+const CACHE_NAME = "supportnote-invite";
 const CACHE_URL = "/__invite-token";
 
 // jsdomにCache APIが無いため、Map実装の代替を差す。

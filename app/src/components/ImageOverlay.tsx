@@ -175,7 +175,7 @@ export function ImageOverlay({
 // fullUrl未取得（オフライン等）のときは何もしない（draggable={false}にしているので通常はここへ来ない）
 export function onImageDragStart(e: React.DragEvent<HTMLImageElement>, att: AttachmentMeta, fullUrl: string | undefined): void {
   if (!fullUrl) return;
-  const filename = `タニメモ-画像-${att.id.slice(-6)}.${mimeToExt(att.mime)}`;
+  const filename = `サポートノート-画像-${att.id.slice(-6)}.${mimeToExt(att.mime)}`;
   e.dataTransfer.setData("DownloadURL", downloadUrlSpec(att.mime, filename, fullUrl));
   e.dataTransfer.setData("text/uri-list", fullUrl);
   e.dataTransfer.effectAllowed = "copy";
@@ -192,7 +192,7 @@ function useFullImageUrl(id: string | null): string | null {
     let alive = true;
     let created: string | null = null;
     void (async () => {
-      const token = localStorage.getItem("tanimemo.token") ?? "";
+      const token = localStorage.getItem("supportnote.token") ?? "";
       const blob = await getImageBlob(id, token);
       if (alive && blob) {
         created = URL.createObjectURL(blob);

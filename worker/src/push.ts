@@ -30,6 +30,6 @@ export async function handlePushTest(req: Request, env: Env): Promise<Response> 
   const row = await env.DB.prepare("SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE endpoint=?")
     .bind(b.endpoint ?? "").first<{ id: string; endpoint: string; p256dh: string; auth: string }>();
   if (!row) return new Response("subscription not found", { status: 404 });
-  const res = await makeSender(env)(row, JSON.stringify({ title: "タニメモのテスト通知" }));
+  const res = await makeSender(env)(row, JSON.stringify({ title: "サポートノートのテスト通知" }));
   return Response.json({ ok: res.ok, status: res.status ?? 200 });
 }
