@@ -18,6 +18,8 @@ export async function upsertNote(db: D1Database, n: NoteRecord): Promise<UpsertR
   // 旧クライアント互換: フィールド自体が無ければ列に触れない（=現状維持）。明示的nullは書き込む
   if ("folderId" in n) { cols.push("folder_id"); vals.push(n.folderId ?? null); sets.push("folder_id=excluded.folder_id"); }
   if ("orderKey" in n) { cols.push("order_key"); vals.push(n.orderKey ?? null); sets.push("order_key=excluded.order_key"); }
+  if ("author" in n) { cols.push("author"); vals.push(n.author ?? null); sets.push("author=excluded.author"); }
+  if ("answered" in n) { cols.push("answered"); vals.push(n.answered ?? 0); sets.push("answered=excluded.answered"); }
   const sql = `INSERT INTO notes (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})
     ON CONFLICT(id) DO UPDATE SET ${sets.join(",")}
     WHERE excluded.updated_at > notes.updated_at`;
@@ -68,6 +70,7 @@ export async function upsertFolder(db: D1Database, f: FolderRecord): Promise<boo
 type NoteRow = {
   id: string; body: string; importance: number; created_at: number; updated_at: number;
   deleted: 0 | 1; folder_id: string | null; order_key: number | null;
+  author: string | null; answered: 0 | 1;
 };
 type AttRow = { id: string; note_id: string; mime: string; size: number; created_at: number; updated_at: number; deleted: 0 | 1 };
 type FolderRow = {
@@ -136,6 +139,7 @@ export async function handleSync(req: Request, env: Env): Promise<Response> {
   ).bind(body.since).all<{ id: string; purged_at: number; kind: string }>();
   const noteStubs: NoteRecord[] = purgedRows.results.filter((r) => r.kind === "note").map((r) => ({
     id: r.id, body: "", importance: 0, createdAt: 0, updatedAt: r.purged_at, deleted: 1, folderId: null, orderKey: null,
+    author: null, answered: 0,
   }));
   const folderStubs: FolderRecord[] = purgedRows.results.filter((r) => r.kind === "folder").map((r) => ({
     id: r.id, name: "", parentId: null, createdAt: 0, updatedAt: r.purged_at, deleted: 1, orderKey: null,
@@ -144,6 +148,7 @@ export async function handleSync(req: Request, env: Env): Promise<Response> {
     ...noteRows.results.map((r) => ({
       id: r.id, body: r.body, importance: r.importance,
       createdAt: r.created_at, updatedAt: r.updated_at, deleted: r.deleted, folderId: r.folder_id, orderKey: r.order_key,
+      author: r.author, answered: r.answered,
     })),
     ...noteStubs,
   ];

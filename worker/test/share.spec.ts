@@ -50,4 +50,16 @@ describe("/api/share", () => {
     const note = data.notes.find((n: any) => n.id === noteId);
     expect(note.body).toBe("a\n- [ ] x");
   });
+
+  it("author欄があればメモのauthorに設定される（任意項目）", async () => {
+    const form = new FormData();
+    form.append("text", "問い合わせ内容");
+    form.append("author", "山田");
+    const res = await SELF.fetch("https://example.com/api/share", { method: "POST", headers: TOKEN, body: form });
+    expect(res.status).toBe(200);
+    const { noteId } = (await res.json()) as any;
+    const data = await pull();
+    const note = data.notes.find((n: any) => n.id === noteId);
+    expect(note.author).toBe("山田");
+  });
 });

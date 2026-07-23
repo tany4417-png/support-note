@@ -9,6 +9,10 @@ export type NoteRecord = {
   folderId?: string | null;
   // 旧クライアントはこのフィールド自体を送らないことがある（upsertNoteはその場合order_keyを現状維持する）
   orderKey?: number | null;
+  // 旧クライアントはこのフィールド自体を送らないことがある（upsertNoteはその場合authorを現状維持する）
+  author?: string | null;
+  // 旧クライアントはこのフィールド自体を送らないことがある（upsertNoteはその場合answeredを現状維持する）
+  answered?: 0 | 1;
 };
 
 export type AttachmentRecord = {

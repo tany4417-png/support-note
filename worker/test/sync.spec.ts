@@ -292,4 +292,39 @@ describe("/api/sync", () => {
     const res = await (await sync({ since: 0, notes: [note({ id: "r4", updatedAt: 100, body: "old" })], attachments: [] })).json() as any;
     expect(res.purgedIds ?? []).not.toContain("r4");
   });
+
+  it("メモのauthor/answeredが往復する", async () => {
+    await sync({ since: 0, notes: [note({ id: "WITHAUTHOR", author: "山田", answered: 1 })], attachments: [] });
+    const data = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
+    const after = data.notes.find((n: any) => n.id === "WITHAUTHOR");
+    expect(after?.author).toBe("山田");
+    expect(after?.answered).toBe(1);
+  });
+
+  it("author/answeredフィールドの無いpush（旧クライアント）は現状維持する", async () => {
+    await sync({ since: 0, notes: [note({ id: "OLDCLIENTAUTHOR", author: "山田", answered: 1 })], attachments: [] });
+    // 旧クライアントを模してauthor/answeredフィールド自体を持たないオブジェクトをpushする
+    const legacyBody = {
+      since: 0,
+      notes: [{
+        id: "OLDCLIENTAUTHOR", body: "edited-by-old-client", importance: 0,
+        createdAt: 100, updatedAt: 200, deleted: 0, folderId: null,
+      }],
+      attachments: [],
+    };
+    const res = await sync(legacyBody);
+    expect(res.status).toBe(200);
+    const data = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
+    const after = data.notes.find((n: any) => n.id === "OLDCLIENTAUTHOR");
+    expect(after?.body).toBe("edited-by-old-client");
+    expect(after?.author).toBe("山田");
+    expect(after?.answered).toBe(1);
+  });
+
+  it("明示的にauthor: nullをpushすると反映される", async () => {
+    await sync({ since: 0, notes: [note({ id: "EXPLICITNULLAUTHOR", author: "山田" })], attachments: [] });
+    await sync({ since: 0, notes: [note({ id: "EXPLICITNULLAUTHOR", author: null, updatedAt: 200 })], attachments: [] });
+    const data = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
+    expect(data.notes.find((n: any) => n.id === "EXPLICITNULLAUTHOR")?.author).toBeNull();
+  });
 });

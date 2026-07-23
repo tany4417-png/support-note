@@ -5,6 +5,7 @@ import { upsertAttachment, upsertNote } from "./sync";
 export async function handleShare(req: Request, env: Env): Promise<Response> {
   const form = await req.formData();
   const text = form.get("text");
+  const authorField = form.get("author");
   const files = form.getAll("file").filter((f): f is File => f instanceof File);
   const hasText = typeof text === "string" && text.trim() !== "";
   if (!hasText && files.length === 0) return new Response("empty", { status: 400 });
@@ -12,7 +13,8 @@ export async function handleShare(req: Request, env: Env): Promise<Response> {
   const now = Date.now();
   const noteId = ulid();
   const body = hasText ? (text as string).trim().replace(/\r\n?/g, "\n") : "";
-  await upsertNote(env.DB, { id: noteId, body, importance: 0, createdAt: now, updatedAt: now, deleted: 0, folderId: null });
+  const author = typeof authorField === "string" && authorField.trim() !== "" ? authorField.trim() : null;
+  await upsertNote(env.DB, { id: noteId, body, importance: 0, createdAt: now, updatedAt: now, deleted: 0, folderId: null, author });
 
   for (const f of files) {
     const attId = ulid();
