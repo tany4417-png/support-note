@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { useLiveQuery } from "dexie-react-hooks";
 import { NoteList } from "./components/NoteList";
 import { NoteScreen } from "./components/NoteScreen";
-import { RemindersScreen } from "./components/RemindersScreen";
 import { Settings } from "./components/Settings";
 import { SyncStatus } from "./components/SyncStatus";
 import { TrashScreen } from "./components/TrashScreen";
@@ -30,18 +29,16 @@ import { shouldCompleteBack } from "./lib/gesture";
 import { saveToken } from "./lib/invite";
 import { createNote, discardIfEmptyNew, listActiveNotes, purgeExpiredTrashLocal, restoreNote, softDeleteNote, sweepEmptyNewNotes, updateNote, type NotePatch } from "./lib/notes";
 import type { ReorderPlan } from "./lib/reorder";
-import { excludeReminders, searchNotes, sortNotes, type SortMode } from "./lib/sort";
+import { searchNotes, sortNotes, type SortMode } from "./lib/sort";
 import { runSync } from "./lib/sync";
 import { clearUnread, pruneUnread, syncAppBadge } from "./lib/unread";
 
-// withReminder: リマインダーフォルダの「新規」から開いたメモ。リマインダーシートを開いた状態で始める
-type View = { name: "list" } | { name: "note"; id: string; isNew?: boolean; withReminder?: boolean } | { name: "settings" } | { name: "trash" } | { name: "reminders" };
+type View = { name: "list" } | { name: "note"; id: string; isNew?: boolean } | { name: "settings" } | { name: "trash" };
 
 // メモ内容の変更（App onChangeハンドラ経由）の操作ラベル。undo/redoボタンの表示にのみ使う
 function labelForNotePatch(patch: NotePatch): string {
   if ("importance" in patch) return "重要度を変更";
   if ("body" in patch) return "本文を変更";
-  if ("remindAt" in patch) return patch.remindAt == null ? "通知を解除" : "リマインダーを設定";
   return "メモを編集";
 }
 
@@ -135,11 +132,10 @@ export default function App() {
   );
   const childFolders = useLiveQuery(() => listChildFolders(currentFolderId), [currentFolderId], []);
   const folderPathList = useLiveQuery(() => folderPath(currentFolderId), [currentFolderId], []);
-  // 検索が空のときだけ現在フォルダ直下に絞る。検索中は全フォルダ横断（従来どおり）。
-  // 置き場の表示ではリマインダー付きメモを除く（リマインダーフォルダだけに出す。検索では見つかる）
+  // 検索が空のときだけ現在フォルダ直下に絞る。検索中は全フォルダ横断（従来どおり）
   const isBrowsingFolder = query.trim() === "";
   const scopedNotes = useMemo(
-    () => (isBrowsingFolder ? excludeReminders(notes.filter((n) => n.folderId === currentFolderId)) : notes),
+    () => (isBrowsingFolder ? notes.filter((n) => n.folderId === currentFolderId) : notes),
     [notes, isBrowsingFolder, currentFolderId]
   );
   const shown = useMemo(
@@ -320,7 +316,7 @@ export default function App() {
     return () => document.removeEventListener("visibilitychange", check);
   }, []);
 
-  // メモを開いたら通知の未読を解除する。一覧タップ・リマインダー一覧・通知タップ・起動URLの
+  // メモを開いたら通知の未読を解除する。一覧タップ・通知タップ・起動URLの
   // 全経路が view=note に収束するため、ここ1箇所でよい（clearUnread内でアイコンバッジも更新される）
   useEffect(() => {
     if (view.name === "note") void clearUnread(view.id).catch(() => {});
@@ -431,10 +427,6 @@ export default function App() {
       }
       if (view.name === "trash") {
         setView({ name: "settings" });
-        return;
-      }
-      if (view.name === "reminders") {
-        setView({ name: "list" });
         return;
       }
       if (view.name === "list" && currentFolderId !== null) {
@@ -794,7 +786,6 @@ export default function App() {
           onOpenFolder={onOpenFolder}
           onNavigateUp={onNavigateUp}
           onBack={navigateBack}
-          onOpenReminders={() => goForward({ name: "reminders" })}
           onCreateFolder={onCreateFolder}
           onRenameCurrentFolder={onRenameCurrentFolder}
           onDeleteFolder={onDeleteFolder}
@@ -810,14 +801,11 @@ export default function App() {
           slideClass={slideClass}
           note={current}
           startEditing={view.name === "note" && view.isNew === true}
-          startWithReminder={view.withReminder === true}
           onChange={(patch) => {
             // 逆操作に必要な旧値は、変更対象のフィールドだけをcurrentからスナップショットする
             const before: NotePatch = {};
             if ("body" in patch) before.body = current.body;
             if ("importance" in patch) before.importance = current.importance;
-            if ("remindAt" in patch) before.remindAt = current.remindAt;
-            if ("repeatRule" in patch) before.repeatRule = current.repeatRule;
             void runAction(
               labelForNotePatch(patch),
               async () => {
@@ -908,34 +896,6 @@ export default function App() {
           onBack={navigateBack}
           onRestoreNote={onRestoreNoteFromTrash}
           onRestoreFolder={onRestoreFolderFromTrash}
-        />
-      )}
-      {view.name === "reminders" && (
-        <RemindersScreen
-          syncBar={syncBar}
-          slideClass={slideClass}
-          onOpenNote={(id) => goForward({ name: "note", id })}
-          onBack={navigateBack}
-          onDelete={(id) => {
-            // NoteListのスワイプ削除と同じ経路（ゴミ箱行き＋グローバルundo1エントリ）
-            void runAction(
-              "メモを削除",
-              async () => {
-                await softDeleteNote(id);
-              },
-              async () => {
-                await restoreNote(id);
-              }
-            );
-          }}
-          onCreate={async () => {
-            // リマインダーフォルダ発の新規＝通知付きメモ。ルート直下に作り、シートを開いた状態で始める。
-            // 新規は即表示（onCreateと同じ理由でスライドインを再生しない）
-            const n = await createNote("", null);
-            setNavDirection("forward");
-            setSuppressSlideIn(true);
-            setView({ name: "note", id: n.id, isNew: true, withReminder: true });
-          }}
         />
       )}
     </main>

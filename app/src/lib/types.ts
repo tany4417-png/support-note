@@ -9,10 +9,6 @@ export type Note = {
   folderId: string | null;
   // 手動並べ替え用の順序キー。null=未設定（旧データ・新規作成直後）。任意欄はfolderId導入前の既存Dexieレコードとの互換のため
   orderKey?: number | null;
-  // リマインド予定時刻（epoch ms）。null=リマインド未設定/解除。repeatRuleと常にペアで送受信する
-  remindAt: number | null;
-  // 繰り返しルール（JSON文字列）。null=繰り返しなし
-  repeatRule: string | null;
 };
 
 export type AttachmentMeta = {

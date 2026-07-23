@@ -1,6 +1,8 @@
 import { buildPushPayload } from "@block65/webcrypto-web-push";
-import type { PushSender, SubRow } from "./reminders";
 import type { Env } from "./index";
+
+export type SubRow = { id: string; endpoint: string; p256dh: string; auth: string };
+export type PushSender = (sub: SubRow, payload: string) => Promise<{ ok: boolean; status?: number }>;
 
 export function makeSender(env: Env): PushSender {
   return async (sub: SubRow, payload: string) => {

@@ -1,6 +1,5 @@
 import type { Env } from "./index";
 import type { AttachmentRecord, FolderRecord, NoteRecord, SyncRequest, SyncResponse } from "./types";
-import { syncReminderRow } from "./reminders";
 
 async function isPurged(db: D1Database, id: string): Promise<boolean> {
   const row = await db.prepare(`SELECT 1 FROM purged WHERE id = ?1`).bind(id).first();
@@ -19,11 +18,6 @@ export async function upsertNote(db: D1Database, n: NoteRecord): Promise<UpsertR
   // 旧クライアント互換: フィールド自体が無ければ列に触れない（=現状維持）。明示的nullは書き込む
   if ("folderId" in n) { cols.push("folder_id"); vals.push(n.folderId ?? null); sets.push("folder_id=excluded.folder_id"); }
   if ("orderKey" in n) { cols.push("order_key"); vals.push(n.orderKey ?? null); sets.push("order_key=excluded.order_key"); }
-  if ("remindAt" in n) {
-    cols.push("remind_at", "repeat_rule");
-    vals.push(n.remindAt ?? null, n.repeatRule ?? null);
-    sets.push("remind_at=excluded.remind_at", "repeat_rule=excluded.repeat_rule");
-  }
   const sql = `INSERT INTO notes (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})
     ON CONFLICT(id) DO UPDATE SET ${sets.join(",")}
     WHERE excluded.updated_at > notes.updated_at`;
@@ -74,7 +68,6 @@ export async function upsertFolder(db: D1Database, f: FolderRecord): Promise<boo
 type NoteRow = {
   id: string; body: string; importance: number; created_at: number; updated_at: number;
   deleted: 0 | 1; folder_id: string | null; order_key: number | null;
-  remind_at: number | null; repeat_rule: string | null;
 };
 type AttRow = { id: string; note_id: string; mime: string; size: number; created_at: number; updated_at: number; deleted: 0 | 1 };
 type FolderRow = {
@@ -126,32 +119,8 @@ export async function handleSync(req: Request, env: Env): Promise<Response> {
   await purgeExpiredTrash(env, now);
   const purgedIds: string[] = [];
   for (const n of body.notes ?? []) {
-    // upsert前に旧値（実効値の比較用）を読んでおく。「発火済み」はreminders行の不在でしか
-    // 表現されないため、appliedのたびに無条件でsyncReminderRowを呼ぶと、単発発火→24時間以内に
-    // そのメモを編集（本文等・remind_at/repeat_rule/deletedは不変）→同期、という経路で
-    // deriveNextFireが「24時間以内の単発＝発火対象」を返し、消化済みの行が復活して重複通知になる。
-    const prior = await env.DB.prepare(`SELECT remind_at, repeat_rule, deleted FROM notes WHERE id=?1`)
-      .bind(n.id).first<{ remind_at: number | null; repeat_rule: string | null; deleted: number }>();
     const result = await upsertNote(env.DB, n);
     if (result === "purged") purgedIds.push(n.id);
-    // "applied"のみ再導出するのは性能最適化。syncReminderRowはnotes確定値からの冪等導出なので、
-    // staleで呼んでも正しさは壊れない（この分岐はテストでは守られていない）
-    else if (result === "applied") {
-      if (!prior) {
-        // 新規メモ（旧行なし）は常に呼ぶ
-        await syncReminderRow(env.DB, n.id, now);
-      } else {
-        // 既存メモは実効値（remind_at・repeat_rule・deleted）が変わったときだけ呼ぶ。
-        // "remindAt"がnにない（旧クライアント）場合、upsertNoteはremind_at/repeat_rule列に触れず
-        // 現状維持するため、実効値もprior（DBの旧値）のまま変わらない。
-        // ゴミ箱復元はdeletedの変化検知でカバーされる
-        const effRemindAt = "remindAt" in n ? (n.remindAt ?? null) : prior.remind_at;
-        const effRepeatRule = "remindAt" in n ? (n.repeatRule ?? null) : prior.repeat_rule;
-        const changed =
-          effRemindAt !== prior.remind_at || effRepeatRule !== prior.repeat_rule || n.deleted !== prior.deleted;
-        if (changed) await syncReminderRow(env.DB, n.id, now);
-      }
-    }
   }
   for (const a of body.attachments ?? []) {
     if (!(await upsertAttachment(env.DB, a))) purgedIds.push(a.id);
@@ -175,14 +144,12 @@ export async function handleSync(req: Request, env: Env): Promise<Response> {
     ...noteRows.results.map((r) => ({
       id: r.id, body: r.body, importance: r.importance,
       createdAt: r.created_at, updatedAt: r.updated_at, deleted: r.deleted, folderId: r.folder_id, orderKey: r.order_key,
-      remindAt: r.remind_at, repeatRule: r.repeat_rule,
     })),
     ...noteStubs,
   ];
   const res: SyncResponse = {
     now,
-    // tags: [] は旧クライアント互換シム（types.tsのNoteRecord.tagsコメント参照）。スタブ含む全notesに付ける
-    notes: noteStubsAndRows.map((n) => ({ ...n, tags: [] as string[] })),
+    notes: noteStubsAndRows,
     attachments: attRows.results.map((r) => ({
       id: r.id, noteId: r.note_id, mime: r.mime, size: r.size,
       createdAt: r.created_at, updatedAt: r.updated_at, deleted: r.deleted,

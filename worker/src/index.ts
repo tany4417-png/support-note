@@ -2,8 +2,6 @@ import { requireAuth } from "./auth";
 import { handleSync } from "./sync";
 import { handleAttachmentGet, handleAttachmentPut } from "./attachments";
 import { handleShare } from "./share";
-import { runReminderTick } from "./reminders";
-import { makeSender } from "./push-sender";
 import { handleVapid, handleSubscribe, handleUnsubscribe, handlePushTest } from "./push";
 
 export interface Env {
@@ -35,8 +33,5 @@ export default {
       return new Response("not found", { status: 404 });
     }
     return env.ASSETS.fetch(req);
-  },
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(runReminderTick(env.DB, Date.now(), makeSender(env)));
   },
 };

@@ -13,7 +13,7 @@ function n(over: Partial<Note> = {}): Note {
   return {
     id: "01HZXW3E8PDEMO0000000000AB", body: "買い物メモ\n- [ ] 牛乳", importance: 2,
     createdAt: new Date("2026-07-20T09:00:00").getTime(), updatedAt: 0, deleted: 0, dirty: 0, folderId: null,
-    remindAt: null, repeatRule: null, ...over,
+    ...over,
   };
 }
 

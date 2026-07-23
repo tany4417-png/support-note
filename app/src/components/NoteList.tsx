@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
 import { firstLineTitle, urlOnly } from "../lib/markdown";
-import { reminderLabel } from "../lib/reminder-label";
 import { makeSnippet } from "../lib/search";
 import { planReorder, type ReorderPlan } from "../lib/reorder";
 import type { SortMode } from "../lib/sort";
@@ -11,7 +10,6 @@ import { Breadcrumb } from "./Breadcrumb";
 import { CardThumbs } from "./CardThumbs";
 import { FolderCard } from "./FolderCard";
 import { BackIcon, CloseIcon } from "./icons";
-import { ReminderFolderCard } from "./ReminderFolderCard";
 import { type ReorderHandler, SwipeableCard } from "./SwipeableCard";
 
 type Props = {
@@ -39,8 +37,6 @@ type Props = {
   onNavigateUp: (id: string | null) => void;
   // ツールバーの「親フォルダへ戻る」ボタン。navigateBack（App.tsx）をそのまま渡す
   onBack: () => void;
-  // リマインダー仮想フォルダのタップ（ルート表示時のみ描画される）
-  onOpenReminders: () => void;
   onCreateFolder: () => void;
   onRenameCurrentFolder: () => void;
   onDeleteFolder: (id: string) => void;
@@ -125,9 +121,6 @@ export function NoteList(p: Props) {
             className={`list-content ${p.slideClass}`}
             key={p.currentFolderId ?? "root"}
           >
-            {isBrowsingFolder && p.currentFolderId === null && (
-              <ReminderFolderCard onOpen={p.onOpenReminders} />
-            )}
             {isBrowsingFolder &&
               p.childFolders.map((f) => (
                 <FolderCard
@@ -193,13 +186,7 @@ export function NoteList(p: Props) {
                     );
                   })()}
                 <CardThumbs noteId={n.id} />
-                <div className="card-sub">
-                  {new Date(n.updatedAt).toLocaleString("ja-JP")}
-                  {/* 防御読み: 旧データでremindAtキーが欠けている可能性を考慮する */}
-                  {(n.remindAt ?? null) != null && (
-                    <span className="card-reminder"> ・{reminderLabel(n.remindAt, n.repeatRule, Date.now())}</span>
-                  )}
-                </div>
+                <div className="card-sub">{new Date(n.updatedAt).toLocaleString("ja-JP")}</div>
               </SwipeableCard>
             ))}
             {p.notes.length === 0 && (

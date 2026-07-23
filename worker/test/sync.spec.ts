@@ -33,12 +33,6 @@ describe("/api/sync", () => {
     expect(data.notes[0].receivedAt).toBeUndefined();
   });
 
-  it("pull応答のメモには旧クライアント互換のtags:[]が必ず付く", async () => {
-    await sync({ since: 0, notes: [note()], attachments: [] });
-    const data = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
-    expect(data.notes[0].tags).toEqual([]);
-  });
-
   it("旧クライアントがtags付きでpushしても受理される（フィールドは無視）", async () => {
     const res = await sync({ since: 0, notes: [{ ...note(), tags: ["メモ"] }], attachments: [] });
     expect(res.status).toBe(200);
@@ -292,36 +286,10 @@ describe("/api/sync", () => {
     expect(after?.orderKey).toBe(5);
   });
 
-  describe("reminder columns", () => {
-    it("remindAt/repeatRuleを保存しpullで返す", async () => {
-      await sync({ since: 0, notes: [note({ id: "r1", remindAt: 1800000000000, repeatRule: '{"type":"daily"}' })], attachments: [] });
-      const res = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
-      const n = res.notes.find((x: any) => x.id === "r1");
-      expect(n.remindAt).toBe(1800000000000);
-      expect(n.repeatRule).toBe('{"type":"daily"}');
-    });
-
-    it("明示的nullは解除として書き込む", async () => {
-      await sync({ since: 0, notes: [note({ id: "r2", updatedAt: 100, remindAt: 1800000000000, repeatRule: null })], attachments: [] });
-      await sync({ since: 0, notes: [note({ id: "r2", updatedAt: 200, remindAt: null, repeatRule: null })], attachments: [] });
-      const res = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
-      expect(res.notes.find((x: any) => x.id === "r2").remindAt).toBeNull();
-    });
-
-    it("フィールド欠落（旧クライアント）は現状維持", async () => {
-      await sync({ since: 0, notes: [note({ id: "r3", updatedAt: 100, remindAt: 1800000000000, repeatRule: null })], attachments: [] });
-      await sync({ since: 0, notes: [note({ id: "r3", updatedAt: 200, body: "edited" })], attachments: [] });
-      const res = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
-      const n = res.notes.find((x: any) => x.id === "r3");
-      expect(n.body).toBe("edited");
-      expect(n.remindAt).toBe(1800000000000); // 維持されている
-    });
-
-    it("古いupdatedAtのpush（LWW負け）はpurgedIdsに載らない", async () => {
-      // 戻り値契約の回帰テスト: LWW棄却をpurge扱いにすると負けた端末のメモが物理削除される
-      await sync({ since: 0, notes: [note({ id: "r4", updatedAt: 200, body: "new" })], attachments: [] });
-      const res = await (await sync({ since: 0, notes: [note({ id: "r4", updatedAt: 100, body: "old" })], attachments: [] })).json() as any;
-      expect(res.purgedIds ?? []).not.toContain("r4");
-    });
+  it("古いupdatedAtのpush（LWW負け）はpurgedIdsに載らない", async () => {
+    // 戻り値契約の回帰テスト: LWW棄却をpurge扱いにすると負けた端末のメモが物理削除される
+    await sync({ since: 0, notes: [note({ id: "r4", updatedAt: 200, body: "new" })], attachments: [] });
+    const res = await (await sync({ since: 0, notes: [note({ id: "r4", updatedAt: 100, body: "old" })], attachments: [] })).json() as any;
+    expect(res.purgedIds ?? []).not.toContain("r4");
   });
 });

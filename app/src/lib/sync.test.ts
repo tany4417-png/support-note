@@ -54,11 +54,11 @@ describe("runSync", () => {
     const a = await createNote("local");
     const incomingNew = {
       id: "REMOTE1", body: "r", importance: 0 as const, createdAt: 1, updatedAt: 1, deleted: 0 as const,
-      folderId: null, remindAt: null, repeatRule: null,
+      folderId: null,
     };
     const incomingOld = {
       id: a.id, body: "stale", importance: 0 as const, createdAt: 1, updatedAt: a.updatedAt - 1, deleted: 0 as const,
-      folderId: null, remindAt: null, repeatRule: null,
+      folderId: null,
     };
     const { f } = okFetch({ notes: [incomingNew, incomingOld] });
     const result = await runSync("tok", f);
@@ -82,8 +82,6 @@ describe("runSync", () => {
       updatedAt: a.updatedAt, // 同一updatedAt
       deleted: 0 as const,
       folderId: "FOLDER-X",
-      remindAt: null,
-      repeatRule: null,
     };
     const { f } = okFetch({ notes: [incomingSameTime] });
     await runSync("tok", f);
@@ -127,8 +125,6 @@ describe("runSync", () => {
       updatedAt: a.updatedAt,
       deleted: a.deleted,
       folderId: a.folderId,
-      remindAt: a.remindAt,
-      repeatRule: a.repeatRule,
     };
     const { f } = okFetch({ notes: [echoBack] });
 
@@ -162,49 +158,6 @@ describe("runSync", () => {
     const { f } = okFetch({ purgedIds: [a.id] });
     await runSync("tok", f);
     expect(await db.notes.get(a.id)).toBeUndefined();
-  });
-
-  it("pullでremindAt/repeatRuleがローカルに入る", async () => {
-    await resetDbForTests();
-    const serverNote = (over: Record<string, unknown>) => ({
-      id: "n1", body: "t", importance: 0, createdAt: 1, updatedAt: 10, deleted: 0,
-      folderId: null, orderKey: null, ...over,
-    });
-    const f = (async () =>
-      new Response(
-        JSON.stringify({
-          now: Date.now(),
-          notes: [serverNote({ remindAt: 123, repeatRule: '{"type":"daily"}' })],
-          attachments: [],
-          folders: [],
-          purgedIds: [],
-        })
-      )) as typeof fetch;
-    await runSync("tok", f);
-    const saved = await db.notes.get("n1");
-    expect(saved!.remindAt).toBe(123);
-    expect(saved!.repeatRule).toBe('{"type":"daily"}');
-  });
-
-  it("pull応答にremindAtが無い（旧サーバー）場合はnullになる", async () => {
-    await resetDbForTests();
-    const serverNote = (over: Record<string, unknown>) => ({
-      id: "n1", body: "t", importance: 0, createdAt: 1, updatedAt: 10, deleted: 0,
-      folderId: null, orderKey: null, ...over,
-    });
-    const f = (async () =>
-      new Response(
-        JSON.stringify({
-          now: Date.now(),
-          notes: [serverNote({})],
-          attachments: [],
-          folders: [],
-          purgedIds: [],
-        })
-      )) as typeof fetch;
-    await runSync("tok", f);
-    const saved = await db.notes.get("n1");
-    expect(saved!.remindAt).toBeNull();
   });
 });
 

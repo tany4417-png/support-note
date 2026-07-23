@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Note } from "./types";
-import { excludeReminders, searchNotes, sortNotes } from "./sort";
+import { searchNotes, sortNotes } from "./sort";
 
 function n(id: string, over: Partial<Note> = {}): Note {
   return {
     id, body: id, importance: 0, createdAt: 0, updatedAt: 0, deleted: 0, dirty: 0, folderId: null,
-    remindAt: null, repeatRule: null, ...over,
+    ...over,
   };
 }
 
@@ -77,14 +77,5 @@ describe("searchNotes", () => {
     const notes = [n("a", { body: "Cloudflare Workers" }), n("b", { body: "メモ" })];
     expect(searchNotes(notes, "cloud").map((x) => x.id)).toEqual(["a"]);
     expect(searchNotes(notes, "  ").map((x) => x.id)).toEqual(["a", "b"]);
-  });
-});
-
-describe("excludeReminders", () => {
-  it("リマインダー付きメモを除外し、null・キー欠落の旧データは残す", () => {
-    const legacy = n("legacy");
-    delete (legacy as Partial<Note>).remindAt;
-    const r = excludeReminders([n("a", { remindAt: 123 }), n("b", { remindAt: null }), legacy]);
-    expect(r.map((x) => x.id)).toEqual(["b", "legacy"]);
   });
 });

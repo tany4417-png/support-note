@@ -15,6 +15,5 @@
       "migrations_dir": "migrations"
     }
   ],
-  "r2_buckets": [{ "binding": "ATT", "bucket_name": "tanimemo-att" }],
-  "triggers": { "crons": ["* * * * *"] }
+  "r2_buckets": [{ "binding": "ATT", "bucket_name": "tanimemo-att" }]
 }

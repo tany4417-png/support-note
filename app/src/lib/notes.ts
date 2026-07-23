@@ -4,14 +4,13 @@ import { thumbKey } from "./attachments";
 import type { Note } from "./types";
 
 export type NotePatch = Partial<
-  Pick<Note, "body" | "importance" | "deleted" | "folderId" | "orderKey" | "remindAt" | "repeatRule">
+  Pick<Note, "body" | "importance" | "deleted" | "folderId" | "orderKey">
 >;
 
 export async function createNote(body = "", folderId: string | null = null): Promise<Note> {
   const now = Date.now();
   const n: Note = {
     id: ulid(), body, importance: 0, createdAt: now, updatedAt: now, deleted: 0, dirty: 1, folderId, orderKey: null,
-    remindAt: null, repeatRule: null,
   };
   await db.notes.put(n);
   return n;

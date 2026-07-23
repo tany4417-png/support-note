@@ -20,7 +20,6 @@ describe("/api/share", () => {
     const data = await pull();
     expect(data.notes).toHaveLength(1);
     expect(data.notes[0].body).toBe("https://example.com/article");
-    expect(data.notes[0].tags).toEqual([]);
   });
 
   it("画像ファイルが添付付きメモになる", async () => {

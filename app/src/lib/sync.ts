@@ -111,8 +111,6 @@ export async function runSync(
           ...n,
           folderId: n.folderId ?? null,
           orderKey: n.orderKey ?? null,
-          remindAt: n.remindAt ?? null,
-          repeatRule: n.repeatRule ?? null,
           dirty: 0,
         });
     }

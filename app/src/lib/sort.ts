@@ -26,14 +26,6 @@ export function sortNotes(notes: Note[], mode: SortMode): Note[] {
   return [...sorted.filter((n) => n.importance === 3), ...sorted.filter((n) => n.importance !== 3)];
 }
 
-// リマインダー付きメモを置き場（ルート/フォルダ直下の一覧・フォルダ件数）の表示から外す。
-// リマインダーフォルダだけに出すため（2026-07-23 オーナー要望）。folderIdは保持したままなので、
-// 通知を解除すれば元の場所に戻る。検索は全メモ横断のままこのフィルタを通さない。
-// == null は旧データのキー欠落(undefined)も拾う防御読み
-export function excludeReminders<T extends { remindAt?: number | null }>(notes: T[]): T[] {
-  return notes.filter((n) => n.remindAt == null);
-}
-
 export function searchNotes(notes: Note[], query: string): Note[] {
   const q = query.trim().toLowerCase();
   if (!q) return notes;
