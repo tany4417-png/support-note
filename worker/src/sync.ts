@@ -1,5 +1,7 @@
 import type { Env } from "./index";
 import type { AttachmentRecord, FolderRecord, NoteRecord, SyncRequest, SyncResponse } from "./types";
+import { makeSender } from "./push-sender";
+import { notifySyncEvents, type SyncEvents } from "./notify";
 
 async function isPurged(db: D1Database, id: string): Promise<boolean> {
   const row = await db.prepare(`SELECT 1 FROM purged WHERE id = ?1`).bind(id).first();
@@ -25,6 +27,23 @@ export async function upsertNote(db: D1Database, n: NoteRecord): Promise<UpsertR
     WHERE excluded.updated_at > notes.updated_at`;
   const res = await db.prepare(sql).bind(...vals).run();
   return (res.meta.changes ?? 0) > 0 ? "applied" : "stale";
+}
+
+export type PriorNoteState = { answered: 0 | 1; deleted: 0 | 1 };
+
+// 新着通知/対応済み通知のためのイベント判定。同期セマンティクス（LWW等）には関与せず、
+// upsertNote適用結果とupsert前の状態(prior)を観察するだけの純粋関数。
+// (a) prior無し・applied・n.deleted===0 → created（新規メモ。到着時点で削除済みのものは対象外）
+// (b) priorあり・prior.answered===0・n.answered===1・applied → answeredDone（未対応→対応済みの遷移）
+export function classifySyncEvent(
+  prior: PriorNoteState | null,
+  result: UpsertResult,
+  n: NoteRecord
+): "created" | "answeredDone" | null {
+  if (result !== "applied") return null;
+  if (prior == null) return n.deleted === 0 ? "created" : null;
+  if (prior.answered === 0 && n.answered === 1) return "answeredDone";
+  return null;
 }
 
 export async function upsertAttachment(db: D1Database, a: AttachmentRecord): Promise<boolean> {
@@ -116,14 +135,21 @@ export async function purgeExpiredTrash(env: Env, now: number): Promise<void> {
   await env.DB.prepare(`DELETE FROM purged WHERE purged_at < ?1`).bind(now - PURGED_LOG_RETENTION_MS).run();
 }
 
-export async function handleSync(req: Request, env: Env): Promise<Response> {
+export async function handleSync(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const body = (await req.json()) as SyncRequest;
   const now = Date.now();
   await purgeExpiredTrash(env, now);
   const purgedIds: string[] = [];
+  const events: SyncEvents = { created: [], answeredDone: [] };
   for (const n of body.notes ?? []) {
+    // upsert前の状態を読んでおく（新着/対応済み遷移の判定用。upsert自体はここでは何も参照しない）
+    const prior = await env.DB.prepare(`SELECT answered, deleted FROM notes WHERE id=?1`)
+      .bind(n.id).first<PriorNoteState>();
     const result = await upsertNote(env.DB, n);
-    if (result === "purged") purgedIds.push(n.id);
+    if (result === "purged") { purgedIds.push(n.id); continue; }
+    const kind = classifySyncEvent(prior, result, n);
+    if (kind === "created") events.created.push({ id: n.id, author: n.author, body: n.body });
+    else if (kind === "answeredDone") events.answeredDone.push({ id: n.id, body: n.body });
   }
   for (const a of body.attachments ?? []) {
     if (!(await upsertAttachment(env.DB, a))) purgedIds.push(a.id);
@@ -168,5 +194,8 @@ export async function handleSync(req: Request, env: Env): Promise<Response> {
     ],
     purgedIds,
   };
+  if (events.created.length > 0 || events.answeredDone.length > 0) {
+    ctx.waitUntil(notifySyncEvents(env.DB, makeSender(env), events, body.selfEndpoint ?? null));
+  }
   return Response.json(res);
 }

@@ -15,13 +15,13 @@ export interface Env {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname.startsWith("/api/")) {
       const denied = requireAuth(req, env);
       if (denied) return denied;
       if (url.pathname === "/api/health") return Response.json({ ok: true });
-      if (url.pathname === "/api/sync" && req.method === "POST") return handleSync(req, env);
+      if (url.pathname === "/api/sync" && req.method === "POST") return handleSync(req, env, ctx);
       if (url.pathname === "/api/share" && req.method === "POST") return handleShare(req, env);
       if (url.pathname === "/api/push/vapid" && req.method === "GET") return handleVapid(env);
       if (url.pathname === "/api/push/subscribe" && req.method === "POST") return handleSubscribe(req, env);

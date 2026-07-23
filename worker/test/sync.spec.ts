@@ -1,5 +1,6 @@
 import { SELF, env } from "cloudflare:test";
 import { describe, it, expect, afterEach } from "vitest";
+import { classifySyncEvent } from "../src/sync";
 
 const AUTH = { "Content-Type": "application/json", Authorization: "Bearer test-token" };
 
@@ -21,6 +22,7 @@ describe("/api/sync", () => {
     await env.DB.prepare("DELETE FROM attachments").run();
     await env.DB.prepare("DELETE FROM purged").run();
     await env.DB.prepare("DELETE FROM folders").run();
+    await env.DB.prepare("DELETE FROM push_subscriptions").run();
   });
 
   it("pushしたメモがpullで返る", async () => {
@@ -326,5 +328,69 @@ describe("/api/sync", () => {
     await sync({ since: 0, notes: [note({ id: "EXPLICITNULLAUTHOR", author: null, updatedAt: 200 })], attachments: [] });
     const data = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
     expect(data.notes.find((n: any) => n.id === "EXPLICITNULLAUTHOR")?.author).toBeNull();
+  });
+
+  it("購読が存在する状態で新規メモをpushしても、通知処理がsyncの応答を壊さない（ctx.waitUntil配線のスモークテスト）", async () => {
+    await env.DB.prepare(
+      "INSERT INTO push_subscriptions (id, endpoint, p256dh, auth, device_label, created_at) VALUES (?,?,?,?,?,?)"
+    ).bind("sub1", "https://push.example/sub1", "k", "a", "test", 1).run();
+    const res = await sync({ since: 0, notes: [note({ id: "NOTIFYME", author: "山田" })], attachments: [] });
+    expect(res.status).toBe(200);
+    const data = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
+    expect(data.notes.find((n: any) => n.id === "NOTIFYME")?.body).toBe("hello");
+  });
+
+  it("selfEndpointを送っても通常どおり同期できる（新フィールドが既存挙動を壊さない）", async () => {
+    const res = await sync({ since: 0, notes: [note({ id: "WITHSELFENDPOINT" })], attachments: [], selfEndpoint: "https://push.example/me" });
+    expect(res.status).toBe(200);
+    const data = await (await sync({ since: 0, notes: [], attachments: [] })).json() as any;
+    expect(data.notes.find((n: any) => n.id === "WITHSELFENDPOINT")?.body).toBe("hello");
+  });
+});
+
+describe("classifySyncEvent（新着/対応済み通知イベントの判定）", () => {
+  function n(over: Record<string, unknown> = {}) {
+    return {
+      id: "N1", body: "本文", importance: 0, createdAt: 100, updatedAt: 100, deleted: 0 as const,
+      answered: 0 as const, ...over,
+    };
+  }
+
+  it("prior無し・applied・deleted=0 は created", () => {
+    expect(classifySyncEvent(null, "applied", n())).toBe("created");
+  });
+
+  it("prior無し・applied・deleted=1（削除済みとして初到着）は通知しない", () => {
+    expect(classifySyncEvent(null, "applied", n({ deleted: 1 }))).toBeNull();
+  });
+
+  it("prior無し・stale（本来起こらないが念のため）は通知しない", () => {
+    expect(classifySyncEvent(null, "stale", n())).toBeNull();
+  });
+
+  it("既存メモの本文だけの編集（answered不変）は通知しない", () => {
+    // brief Step1 (4): 本文だけの編集では届かない
+    const prior = { answered: 0 as const, deleted: 0 as const };
+    expect(classifySyncEvent(prior, "applied", n({ body: "編集後の本文" }))).toBeNull();
+  });
+
+  it("prior.answered=0 かつ n.answered=1 かつ applied は answeredDone", () => {
+    const prior = { answered: 0 as const, deleted: 0 as const };
+    expect(classifySyncEvent(prior, "applied", n({ answered: 1 }))).toBe("answeredDone");
+  });
+
+  it("既に対応済み(answered=1)のメモをそのまま編集しても通知しない", () => {
+    const prior = { answered: 1 as const, deleted: 0 as const };
+    expect(classifySyncEvent(prior, "applied", n({ answered: 1, body: "編集" }))).toBeNull();
+  });
+
+  it("対応済みから未対応へ戻す変更は通知しない（対応済み遷移ではない）", () => {
+    const prior = { answered: 1 as const, deleted: 0 as const };
+    expect(classifySyncEvent(prior, "applied", n({ answered: 0 }))).toBeNull();
+  });
+
+  it("対応済み遷移でもLWW負け(stale)なら通知しない", () => {
+    const prior = { answered: 0 as const, deleted: 0 as const };
+    expect(classifySyncEvent(prior, "stale", n({ answered: 1 }))).toBeNull();
   });
 });

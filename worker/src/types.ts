@@ -36,5 +36,13 @@ export type FolderRecord = {
   orderKey?: number | null;
 };
 
-export type SyncRequest = { since: number; notes: NoteRecord[]; attachments: AttachmentRecord[]; folders?: FolderRecord[] };
+export type SyncRequest = {
+  since: number;
+  notes: NoteRecord[];
+  attachments: AttachmentRecord[];
+  folders?: FolderRecord[];
+  // 同期時サーバープッシュ通知の送信先から自分自身の端末を除外するための購読endpoint。
+  // 未対応環境・未購読・取得失敗はnull（appのgetSelfEndpointがtry/catchで握る）
+  selfEndpoint?: string | null;
+};
 export type SyncResponse = { now: number; notes: NoteRecord[]; attachments: AttachmentRecord[]; folders: FolderRecord[]; purgedIds: string[] };

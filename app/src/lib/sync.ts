@@ -4,6 +4,19 @@ import type { AttachmentMeta, Folder, Note, SyncResponse } from "./types";
 
 export type SyncResult = { pushed: number; pulled: number; failedAttachments: number };
 
+// 同期時サーバープッシュ通知の送信対象から自分自身の端末を除外するための購読endpoint。
+// 未対応環境・未購読・取得失敗（例外）はすべてnullを返す。取得失敗でsync自体を壊さないためtry/catchで握る
+async function getSelfEndpoint(): Promise<string | null> {
+  try {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return null;
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    return sub?.endpoint ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function stripNote(n: Note) {
   const { dirty: _dirty, ...rest } = n;
   return rest;
@@ -69,6 +82,7 @@ export async function runSync(
     }
   }
 
+  const selfEndpoint = await getSelfEndpoint();
   const res = await fetchFn("/api/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -77,6 +91,7 @@ export async function runSync(
       notes: dirtyNotes.map(stripNote),
       attachments: dirtyAtts.map(stripAtt),
       folders: dirtyFolders.map(stripFolder),
+      selfEndpoint,
     }),
   });
   if (!res.ok) throw new Error(`sync failed: ${res.status}`);

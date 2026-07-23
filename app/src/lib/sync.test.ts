@@ -439,3 +439,73 @@ describe("runSync 添付アップロード失敗時のスキップ（画像1件�
     expect((await db.attachments.get(meta.id))?.dirty).toBe(0);
   });
 });
+
+describe("runSync selfEndpoint（同期時サーバープッシュの本人除外用）", () => {
+  it("navigator.serviceWorker非対応環境ではselfEndpointをnullで送る", async () => {
+    await db.meta.put({ key: "fullResyncV4", value: 1 });
+    await createNote("a");
+    const { f, calls } = okFetch();
+    await runSync("tok", f);
+    const body = JSON.parse(String(calls[0].init.body));
+    expect(body.selfEndpoint).toBeNull();
+  });
+
+  it("push購読中の端末はpushManagerのendpointをselfEndpointとして送る", async () => {
+    await db.meta.put({ key: "fullResyncV4", value: 1 });
+    await createNote("a");
+    vi.stubGlobal("navigator", {
+      serviceWorker: {
+        ready: Promise.resolve({
+          pushManager: { getSubscription: async () => ({ endpoint: "https://push.example/mydevice" }) },
+        }),
+      },
+    });
+    try {
+      const { f, calls } = okFetch();
+      await runSync("tok", f);
+      const body = JSON.parse(String(calls[0].init.body));
+      expect(body.selfEndpoint).toBe("https://push.example/mydevice");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("serviceWorker.readyはあるが未購読（getSubscriptionがnull）ならselfEndpointはnull", async () => {
+    await db.meta.put({ key: "fullResyncV4", value: 1 });
+    await createNote("a");
+    vi.stubGlobal("navigator", {
+      serviceWorker: {
+        ready: Promise.resolve({ pushManager: { getSubscription: async () => null } }),
+      },
+    });
+    try {
+      const { f, calls } = okFetch();
+      await runSync("tok", f);
+      const body = JSON.parse(String(calls[0].init.body));
+      expect(body.selfEndpoint).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("selfEndpointの取得が例外を投げても同期自体は成功し、selfEndpointはnullで送られる", async () => {
+    await db.meta.put({ key: "fullResyncV4", value: 1 });
+    await createNote("a");
+    vi.stubGlobal("navigator", {
+      serviceWorker: {
+        get ready(): Promise<never> {
+          throw new Error("boom");
+        },
+      },
+    });
+    try {
+      const { f, calls } = okFetch();
+      const result = await runSync("tok", f);
+      expect(result.pushed).toBe(1);
+      const body = JSON.parse(String(calls[0].init.body));
+      expect(body.selfEndpoint).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
