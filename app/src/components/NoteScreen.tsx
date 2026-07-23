@@ -22,7 +22,7 @@ type Props = {
   slideClass: string;
   note: Note;
   startEditing?: boolean;
-  onChange: (patch: { body?: string; importance?: 0 | 1 | 2 | 3 }) => void;
+  onChange: (patch: { body?: string; importance?: 0 | 1 | 2 | 3; answered?: 0 | 1 }) => void;
   onDelete: () => void;
   onBack: () => void;
   // メモの移動（移動ピッカーで選んだ先）。App側でundo登録・同期スケジュールまで面倒を見る
@@ -307,6 +307,13 @@ export function NoteScreen({ syncBar, slideClass, note, startEditing, onChange, 
                 </button>
               ))}
             </span>
+            {/* 対応ステータスのトグル。未対応(0)なら対応済みへ、対応済み(1)なら未対応へ戻す */}
+            <button
+              className={note.answered === 0 ? "tint acc-green" : "tint acc-amber"}
+              onClick={() => onChange({ answered: note.answered === 0 ? 1 : 0 })}
+            >
+              {note.answered === 0 ? "対応済みにする" : "未対応に戻す"}
+            </button>
             <span className="spacer" />
             {editing && (
               <>

@@ -10,6 +10,7 @@ import { Breadcrumb } from "./Breadcrumb";
 import { CardThumbs } from "./CardThumbs";
 import { FolderCard } from "./FolderCard";
 import { BackIcon, CloseIcon } from "./icons";
+import { PendingCard } from "./PendingCard";
 import { type ReorderHandler, SwipeableCard } from "./SwipeableCard";
 
 type Props = {
@@ -44,6 +45,8 @@ type Props = {
   onMoveFolder: (id: string, parentId: string | null) => void;
   onReorderNote: (plan: ReorderPlan<{ id: string; orderKey: number | null }>) => void;
   onReorderFolder: (plan: ReorderPlan<{ id: string; orderKey: number | null }>) => void;
+  // 未対応（PendingCard）のタップ（ルート表示時のみ描画される）
+  onOpenPending: () => void;
 };
 
 export function NoteList(p: Props) {
@@ -121,6 +124,7 @@ export function NoteList(p: Props) {
             className={`list-content ${p.slideClass}`}
             key={p.currentFolderId ?? "root"}
           >
+            {isBrowsingFolder && p.currentFolderId === null && <PendingCard onOpen={p.onOpenPending} />}
             {isBrowsingFolder &&
               p.childFolders.map((f) => (
                 <FolderCard
@@ -159,6 +163,7 @@ export function NoteList(p: Props) {
               >
                 <div className="card-title">
                   {unreadIds.has(n.id) && <span className="unread-dot" aria-label="未読の通知" />}
+                  {n.answered === 0 && <span className="pending-badge">未対応</span>}
                   {n.importance > 0 && <span className="card-stars">{"★".repeat(n.importance)}</span>}
                   {(() => {
                     const url = urlOnly(n.body);

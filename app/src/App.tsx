@@ -3,6 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { NameGate } from "./components/NameGate";
 import { NoteList } from "./components/NoteList";
 import { NoteScreen } from "./components/NoteScreen";
+import { PendingScreen } from "./components/PendingScreen";
 import { Settings } from "./components/Settings";
 import { SyncStatus } from "./components/SyncStatus";
 import { TrashScreen } from "./components/TrashScreen";
@@ -35,11 +36,17 @@ import { searchNotes, sortNotes, type SortMode } from "./lib/sort";
 import { runSync } from "./lib/sync";
 import { clearUnread, pruneUnread, syncAppBadge } from "./lib/unread";
 
-type View = { name: "list" } | { name: "note"; id: string; isNew?: boolean } | { name: "settings" } | { name: "trash" };
+type View =
+  | { name: "list" }
+  | { name: "note"; id: string; isNew?: boolean }
+  | { name: "settings" }
+  | { name: "trash" }
+  | { name: "pending" };
 
 // メモ内容の変更（App onChangeハンドラ経由）の操作ラベル。undo/redoボタンの表示にのみ使う
 function labelForNotePatch(patch: NotePatch): string {
   if ("importance" in patch) return "重要度を変更";
+  if ("answered" in patch) return patch.answered === 1 ? "対応済みにする" : "未対応に戻す";
   if ("body" in patch) return "本文を変更";
   return "メモを編集";
 }
@@ -433,6 +440,10 @@ export default function App() {
         setView({ name: "settings" });
         return;
       }
+      if (view.name === "pending") {
+        setView({ name: "list" });
+        return;
+      }
       if (view.name === "list" && currentFolderId !== null) {
         const parent = folderPathList.length >= 2 ? folderPathList[folderPathList.length - 2].id : null;
         setCurrentFolderId(parent);
@@ -803,6 +814,7 @@ export default function App() {
           onMoveFolder={onMoveFolder}
           onReorderNote={onReorderNote}
           onReorderFolder={onReorderFolder}
+          onOpenPending={() => goForward({ name: "pending" })}
         />
       )}
       {view.name === "note" && current && (
@@ -816,6 +828,7 @@ export default function App() {
             const before: NotePatch = {};
             if ("body" in patch) before.body = current.body;
             if ("importance" in patch) before.importance = current.importance;
+            if ("answered" in patch) before.answered = current.answered;
             void runAction(
               labelForNotePatch(patch),
               async () => {
@@ -906,6 +919,15 @@ export default function App() {
           onBack={navigateBack}
           onRestoreNote={onRestoreNoteFromTrash}
           onRestoreFolder={onRestoreFolderFromTrash}
+        />
+      )}
+      {view.name === "pending" && (
+        <PendingScreen
+          syncBar={syncBar}
+          slideClass={slideClass}
+          onBack={navigateBack}
+          // 一覧タップと同じ関数（対象は未対応メモの一覧から取得済みで存在が保証されるため、フォールバック判定は不要）
+          onOpenNote={(id) => goForward({ name: "note", id })}
         />
       )}
     </main>

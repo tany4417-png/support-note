@@ -5,7 +5,7 @@ import { getUserName } from "./profile";
 import type { Note } from "./types";
 
 export type NotePatch = Partial<
-  Pick<Note, "body" | "importance" | "deleted" | "folderId" | "orderKey">
+  Pick<Note, "body" | "importance" | "deleted" | "folderId" | "orderKey" | "answered">
 >;
 
 export async function createNote(body = "", folderId: string | null = null): Promise<Note> {
