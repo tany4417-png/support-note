@@ -10,10 +10,10 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "tanimemo",
-      "database_id": "83bb69fb-97a3-4485-a7bf-cd0865709ea6",
+      "database_name": "support-note",
+      "database_id": "1741eadc-bdcf-49b7-be99-b2c1dab75f39",
       "migrations_dir": "migrations"
     }
   ],
-  "r2_buckets": [{ "binding": "ATT", "bucket_name": "tanimemo-att" }]
+  "r2_buckets": [{ "binding": "ATT", "bucket_name": "support-note-att" }]
 }
