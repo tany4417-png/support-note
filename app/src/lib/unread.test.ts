@@ -23,15 +23,33 @@ describe("unread", () => {
     expect((await db.unread.toArray()).map((r) => r.noteId)).toEqual(["b"]);
   });
 
-  it("pruneUnreadは消えたメモ・ゴミ箱行きメモの未読だけ掃除する", async () => {
+  it("pruneUnreadは存在するメモの未読を消さない", async () => {
     const alive = await createNote("残る");
-    const trashed = await createNote("ゴミ箱行き");
-    await softDeleteNote(trashed.id);
     await markUnread(alive.id);
-    await markUnread(trashed.id);
-    await markUnread("missing-note-id");
     await pruneUnread();
     expect((await db.unread.toArray()).map((r) => r.noteId)).toEqual([alive.id]);
+  });
+
+  it("pruneUnreadはdeleted!==0（ゴミ箱行き）のメモの未読行は消す", async () => {
+    const trashed = await createNote("ゴミ箱行き");
+    await softDeleteNote(trashed.id);
+    await markUnread(trashed.id);
+    await pruneUnread();
+    expect(await db.unread.get(trashed.id)).toBeUndefined();
+  });
+
+  it("メモ未pull（ローカルにまだ存在しない）の未読行はpruneで消えない", async () => {
+    // 他人が投稿した、この端末がまだpullしていない新着メモの可能性があるため、
+    // 初回同期が終わる前に消してしまってはいけない（未読の赤点・バッジが早期に消える不具合の回帰）
+    await markUnread("not-pulled-yet");
+    await pruneUnread();
+    expect((await db.unread.toArray()).map((r) => r.noteId)).toEqual(["not-pulled-yet"]);
+  });
+
+  it("7日を超えて放置された孤児未読行（ローカルに無いメモ）はpruneで消える", async () => {
+    await db.unread.put({ noteId: "old-orphan", firedAt: Date.now() - 8 * 24 * 60 * 60 * 1000 });
+    await pruneUnread();
+    expect(await db.unread.get("old-orphan")).toBeUndefined();
   });
 
   it("未読数がアプリアイコンバッジへ反映される（0件でクリア）", async () => {

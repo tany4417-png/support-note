@@ -1,5 +1,5 @@
 {
-  "name": "tanimemo-worker",
+  "name": "support-note-worker",
   "private": true,
   "type": "module",
   "scripts": {

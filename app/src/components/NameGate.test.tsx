@@ -20,18 +20,18 @@ describe("NameGate", () => {
   it("名前を入力して保存すると保存され、onDoneが呼ばれる", () => {
     const onDone = vi.fn();
     render(<NameGate onDone={onDone} />);
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "大谷" } });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "山田" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    expect(getUserName()).toBe("大谷");
+    expect(getUserName()).toBe("山田");
     expect(onDone).toHaveBeenCalledTimes(1);
   });
 
   it("前後の空白はtrimして保存される", () => {
     const onDone = vi.fn();
     render(<NameGate onDone={onDone} />);
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "  大谷  " } });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "  山田  " } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    expect(getUserName()).toBe("大谷");
+    expect(getUserName()).toBe("山田");
   });
 
   it("空白のみの入力は保存できない（onDoneも呼ばれない）", () => {
@@ -55,9 +55,9 @@ describe("NameGate", () => {
     const onDone = vi.fn();
     render(<NameGate onDone={onDone} />);
     const input = screen.getByRole("textbox");
-    fireEvent.change(input, { target: { value: "大谷" } });
+    fireEvent.change(input, { target: { value: "山田" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(getUserName()).toBe("大谷");
+    expect(getUserName()).toBe("山田");
     expect(onDone).toHaveBeenCalledTimes(1);
   });
 });

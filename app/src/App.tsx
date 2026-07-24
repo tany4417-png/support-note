@@ -345,16 +345,22 @@ export default function App() {
   }, []);
 
   // 対象メモがローカルに存在する・かつゴミ箱でない場合だけnoteビューを開き、それ以外はlistへ
-  // フォールバックする（削除済み通知の取りこぼしタップ・他端末で既に消えたメモ等への対策）
+  // フォールバックする（削除済み通知の取りこぼしタップ・他端末で既に消えたメモ等への対策）。
+  // ローカルに存在しない場合は「他人が投稿した、この端末がまだpullしていない新着メモ」の可能性が
+  // あるため、即listへ逃がさず一度だけsyncNowをawaitしてから再確認する（通知が空振りする不具合の対策）
   const openNoteOrFallback = useCallback(
     (id: string) => {
       void (async () => {
-        const n = await db.notes.get(id);
+        let n = await db.notes.get(id);
+        if (!n) {
+          await syncNow();
+          n = await db.notes.get(id);
+        }
         if (n && n.deleted === 0) goForward({ name: "note", id });
         else goForward({ name: "list" });
       })();
     },
-    [goForward]
+    [goForward, syncNow]
   );
 
   // SW（notificationclick）からのpostMessageを受け取り、対象メモを開く。既存ウィンドウがある場合の経路

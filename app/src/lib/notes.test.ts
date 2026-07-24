@@ -43,9 +43,9 @@ describe("メモCRUD", () => {
   });
 
   it("設定済みの名前が新規メモのauthorになる", async () => {
-    vi.spyOn(profile, "getUserName").mockReturnValue("大谷");
+    vi.spyOn(profile, "getUserName").mockReturnValue("山田");
     const n = await createNote("body");
-    expect(n.author).toBe("大谷");
+    expect(n.author).toBe("山田");
   });
 
   it("名前未設定ならauthorはnull", async () => {
