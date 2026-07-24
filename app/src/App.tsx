@@ -75,7 +75,10 @@ export default function App() {
   // 直近のrunSyncで失敗した添付PUTの件数。0より大きい間はSyncStatusのラベルに「次回再送」の注記を出す
   const [failedAttachments, setFailedAttachments] = useState(0);
   const timer = useRef<number | undefined>(undefined);
-  const syncing = useRef(false);
+  // syncNowの進行状況を共有するPromise。進行中はnon-null（同期本体の完了で解決するPromiseそのもの）。
+  // 呼び出し側（openNoteOrFallback等）が「今まさに進行中の同期」の完了を実際に待てるようにするための仕組み
+  // （boolean guardだけだと、進行中に呼んだ側は即resolveしてしまい、本物の完了を待てない）
+  const syncInFlight = useRef<Promise<void> | null>(null);
   // 起動時初期化（空メモ掃除等）の完了Promise。syncNowはこれを待ってから走る（下の初期化effect参照）
   const initCleanupRef = useRef<Promise<void>>(Promise.resolve());
   // NoteScreenの未保存draftを戻り遷移の前にflushするための窓口（NoteScreenがマウント中だけ非null）
@@ -172,26 +175,32 @@ export default function App() {
     await repairOrphans();
   }, [token]);
 
-  const syncNow = useCallback(async () => {
-    if (!token || syncing.current) return;
-    syncing.current = true;
-    setStatus("syncing");
-    try {
-      // 起動時初期化（空メモ掃除等）が終わる前に同期を始めない（初期化effectのコメント参照）
-      await initCleanupRef.current;
-      const result = await runSync(token);
-      setFailedAttachments(result.failedAttachments);
-      await repairOrphansSafely();
-      // ゴミ箱行き・他端末削除・フォルダごと削除の未読をここで一括掃除する
-      // （削除経路ごとの呼び漏れを同期のたびに自己修復）
-      void pruneUnread().catch(() => {});
-      setStatus("idle");
-      setLastSync(Date.now());
-    } catch {
-      setStatus(navigator.onLine ? "error" : "offline");
-    } finally {
-      syncing.current = false;
-    }
+  // 進行中なら新たに走らせず、進行中のPromiseをそのまま返す（呼び出し側はそれをawaitすれば
+  // 本物の同期完了まで待てる）。開始時は本体処理のPromiseをsyncInFlightへ入れ、finallyでnullへ戻す
+  const syncNow = useCallback((): Promise<void> => {
+    if (!token) return Promise.resolve();
+    if (syncInFlight.current) return syncInFlight.current;
+    const p = (async () => {
+      setStatus("syncing");
+      try {
+        // 起動時初期化（空メモ掃除等）が終わる前に同期を始めない（初期化effectのコメント参照）
+        await initCleanupRef.current;
+        const result = await runSync(token);
+        setFailedAttachments(result.failedAttachments);
+        await repairOrphansSafely();
+        // ゴミ箱行き・他端末削除・フォルダごと削除の未読をここで一括掃除する
+        // （削除経路ごとの呼び漏れを同期のたびに自己修復）
+        void pruneUnread().catch(() => {});
+        setStatus("idle");
+        setLastSync(Date.now());
+      } catch {
+        setStatus(navigator.onLine ? "error" : "offline");
+      } finally {
+        syncInFlight.current = null;
+      }
+    })();
+    syncInFlight.current = p;
+    return p;
   }, [token, repairOrphansSafely]);
 
   const scheduleSync = useCallback(() => {
@@ -429,7 +438,7 @@ export default function App() {
           }
           if (!isNewNote) return;
           try {
-            const r = await discardIfEmptyNew(noteId, { preferTrash: syncing.current });
+            const r = await discardIfEmptyNew(noteId, { preferTrash: syncInFlight.current !== null });
             if (r === "trashed") scheduleSync();
           } catch {
             // IndexedDB障害等はここで握りつぶす（残った空メモは次回起動時の掃除で回収される）
