@@ -39,6 +39,7 @@ export function Settings({ syncBar, slideClass, token, onSave, onBack, onExport,
   const diagnostics = useLiveQuery(collectDiagnostics, [], null);
   const [pushOn, setPushOn] = useState(false);
   const [pushMsg, setPushMsg] = useState("");
+  const [tokenCopied, setTokenCopied] = useState(false);
 
   useEffect(() => {
     isPushEnabled().then(setPushOn);
@@ -71,6 +72,25 @@ export function Settings({ syncBar, slideClass, token, onSave, onBack, onExport,
           <label htmlFor="token">APIトークン</label>
           <input id="token" type="password" value={value} onChange={(e) => setValue(e.target.value)} />
           <button className="primary" onClick={() => onSave(value.trim())}>保存</button>
+          {/* 別端末へトークンを移すためのワンタップコピー。iOSはSafariとホーム画面アプリで保存領域が分かれ、
+              パスワード欄からの選択コピーが弾かれやすいため、この画面から直接クリップボードへ渡せるようにする */}
+          {token && (
+            <button
+              className="tint acc-blue"
+              onClick={async () => {
+                if (!navigator.clipboard) return;
+                try {
+                  await navigator.clipboard.writeText(token);
+                  setTokenCopied(true);
+                } catch {
+                  setTokenCopied(false);
+                }
+              }}
+            >
+              トークンをコピー
+            </button>
+          )}
+          {tokenCopied && <p>コピーしました。別の端末の設定に貼り付けてください</p>}
           <label htmlFor="userName">名前（メモに表示されます）</label>
           <input id="userName" value={name} onChange={(e) => setName(e.target.value)} />
           <button
