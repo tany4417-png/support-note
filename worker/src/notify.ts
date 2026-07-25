@@ -94,3 +94,59 @@ export async function notifySyncEvents(
     }
   }
 }
+
+// 1回の送信でこの件数以上になったら、個別送信をやめて「更新 N件」1通に集約する。
+// 初版のCREATED_AGGREGATE_THRESHOLDを引き継いだ値。ただし初版が新規メモだけを
+// 数えていたのに対し、ここでは保留行の総数で数える
+export const AGGREGATE_THRESHOLD = 4;
+
+type Outgoing = { noteId: string; title: string; exclude: Set<string> };
+
+function excludeOf(rows: PendingRow[]): Set<string> {
+  return new Set(rows.map((r) => r.actor_endpoint).filter((e): e is string => e != null));
+}
+
+// 確保済みの保留行を通知へ組み立てる。集約すると宛先が1台も残らない場合は、
+// 4件分の変化が誰にも伝わらなくなるため、個別送信に落とす
+function planNotifications(rows: PendingRow[], notesById: Map<string, NoteRecord>, subs: SubRow[]): Outgoing[] {
+  const individual = (): Outgoing[] =>
+    rows.map((r) => ({
+      noteId: r.note_id,
+      title: buildTitle(r, notesById.get(r.note_id)),
+      exclude: excludeOf([r]),
+    }));
+  if (rows.length < AGGREGATE_THRESHOLD) return individual();
+  const exclude = excludeOf(rows);
+  if (subs.every((s) => exclude.has(s.endpoint))) return individual();
+  const oldest = rows.reduce((a, b) => (b.last_change_at < a.last_change_at ? b : a));
+  return [{ noteId: oldest.note_id, title: `更新 ${rows.length}件`, exclude }];
+}
+
+// 確保済みの保留行を購読中の端末へ送る。1件の送信失敗（例外含む）が他の購読への送信を
+// 妨げないこと、変更者の端末の除外、404/410購読の自動削除がこの関数の責務。
+// 同期セマンティクス（LWW等）には一切関与しない
+export async function sendPending(
+  db: D1Database,
+  send: PushSender,
+  rows: PendingRow[],
+  notesById: Map<string, NoteRecord>,
+  selfEndpoint: string | null
+): Promise<void> {
+  if (rows.length === 0) return;
+  const subsRes = await db.prepare("SELECT id, endpoint, p256dh, auth FROM push_subscriptions").all<SubRow>();
+  const subs = subsRes.results;
+  if (subs.length === 0) return;
+  for (const n of planNotifications(rows, notesById, subs)) {
+    const payload = JSON.stringify({ noteId: n.noteId, title: n.title });
+    for (const sub of subs) {
+      if (n.exclude.has(sub.endpoint) || sub.endpoint === selfEndpoint) continue;
+      const res = await send(sub, payload).catch(() => ({ ok: false as const, status: 0 }));
+      if (!res.ok && (res.status === 404 || res.status === 410)) {
+        // DELETE自体の失敗（D1の一時エラー等）でループを中断させない。消し損ねた行は
+        // 次回以降の送信失敗時に再度DELETEが試みられるため、ここでは握りつぶして継続する
+        await db.prepare("DELETE FROM push_subscriptions WHERE id=?").bind(sub.id).run().catch(() => {});
+      }
+      // 404/410以外の失敗は無視する（再送なし）。1件の失敗が他の送信を止めない
+    }
+  }
+}
