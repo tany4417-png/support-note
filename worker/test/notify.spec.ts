@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect, afterEach } from "vitest";
-import { notifySyncEvents, type SyncEvents } from "../src/notify";
+import { buildTitle, classifyNoteChange, excerpt, notifySyncEvents, type SyncEvents } from "../src/notify";
+import { KIND_ANSWERED, KIND_APPENDED, KIND_CREATED, type PendingRow } from "../src/pending";
 import type { PushSender, SubRow } from "../src/push-sender";
 
 const addSub = (id: string, endpoint = `https://push.example/${id}`) =>
@@ -23,6 +24,98 @@ function recordingSender(result: { ok: boolean; status?: number } = { ok: true }
   };
   return { send, calls };
 }
+
+function note(over: Partial<{ body: string; author: string | null; answered: 0 | 1; deleted: 0 | 1 }> = {}) {
+  return {
+    id: "n1", body: "本文", importance: 0, createdAt: 1, updatedAt: 2, deleted: 0 as 0 | 1,
+    folderId: null, orderKey: null, author: "山田" as string | null, answered: 0 as 0 | 1, ...over,
+  };
+}
+
+function row(over: Partial<PendingRow> = {}): PendingRow {
+  return {
+    note_id: "n1", kinds: KIND_CREATED, actor: "山田", actor_endpoint: null,
+    title_hint: "控え", editing_until: 0, editing_client_id: null, last_change_at: 1, ...over,
+  };
+}
+
+describe("classifyNoteChange", () => {
+  it("サーバーに行が無ければ新規", () => {
+    expect(classifyNoteChange(null, note())).toBe(KIND_CREATED);
+  });
+  it("削除済みで届いた新規は対象外", () => {
+    expect(classifyNoteChange(null, note({ deleted: 1 }))).toBe(0);
+  });
+  it("本文の文字数が増えたら追記", () => {
+    expect(classifyNoteChange({ answered: 0, body: "質問" }, note({ body: "質問\n回答です" }))).toBe(KIND_APPENDED);
+  });
+  it("文字数が変わらない編集は対象外（チェックボックスの切り替え・誤字修正）", () => {
+    expect(classifyNoteChange({ answered: 0, body: "- [ ] やる" }, note({ body: "- [x] やる" }))).toBe(0);
+  });
+  it("文字数が減る編集は対象外", () => {
+    expect(classifyNoteChange({ answered: 0, body: "長い本文です" }, note({ body: "短い" }))).toBe(0);
+  });
+  it("未対応から対応済みへの遷移は対応済み", () => {
+    expect(classifyNoteChange({ answered: 0, body: "質問" }, note({ body: "質問", answered: 1 }))).toBe(KIND_ANSWERED);
+  });
+  it("追記と対応済みは同時に立つ", () => {
+    expect(classifyNoteChange({ answered: 0, body: "質問" }, note({ body: "質問\n回答", answered: 1 })))
+      .toBe(KIND_APPENDED | KIND_ANSWERED);
+  });
+  it("対応済みから未対応への差し戻しは対象外", () => {
+    expect(classifyNoteChange({ answered: 1, body: "質問" }, note({ body: "質問", answered: 0 }))).toBe(0);
+  });
+  it("ゴミ箱行きは対象外", () => {
+    expect(classifyNoteChange({ answered: 0, body: "質問" }, note({ body: "質問と長い追記", deleted: 1 }))).toBe(0);
+  });
+});
+
+describe("excerpt", () => {
+  it("空行を飛ばして1行目を取り、見出し記号を外す", () => {
+    expect(excerpt("\n\n## 見出し\n本文")).toBe("見出し");
+  });
+  it("空の本文は(無題)", () => {
+    expect(excerpt("   ")).toBe("(無題)");
+  });
+  it("60字で切る", () => {
+    expect(excerpt("あ".repeat(80)).length).toBe(60);
+  });
+});
+
+describe("buildTitle", () => {
+  it("新規は作成者の名前を使う（保留行のactorではなく）", () => {
+    expect(buildTitle(row({ kinds: KIND_CREATED, actor: "大谷" }), note({ author: "山田", body: "質問です" })))
+      .toBe("山田: 質問です");
+  });
+  it("他の人の追記は「が返信」", () => {
+    expect(buildTitle(row({ kinds: KIND_APPENDED, actor: "大谷" }), note({ author: "山田", body: "質問です" })))
+      .toBe("大谷が返信: 質問です");
+  });
+  it("投稿者本人の追記は「が追記」", () => {
+    expect(buildTitle(row({ kinds: KIND_APPENDED, actor: "山田" }), note({ author: "山田", body: "質問です" })))
+      .toBe("山田が追記: 質問です");
+  });
+  it("対応済みは「が対応済みに」", () => {
+    expect(buildTitle(row({ kinds: KIND_ANSWERED, actor: "大谷" }), note({ author: "山田", body: "質問です" })))
+      .toBe("大谷が対応済みに: 質問です");
+  });
+  it("追記と対応済みが重なったら1つの文面にまとめる", () => {
+    expect(buildTitle(row({ kinds: KIND_APPENDED | KIND_ANSWERED, actor: "大谷" }), note({ author: "山田", body: "質問です" })))
+      .toBe("大谷が返信して対応済みに: 質問です");
+  });
+  it("新規に他の変化が重なっても新規として扱う", () => {
+    expect(buildTitle(row({ kinds: KIND_CREATED | KIND_APPENDED, actor: "大谷" }), note({ author: "山田", body: "質問です" })))
+      .toBe("山田: 質問です");
+  });
+  it("メモの実体が無ければ控えを使い、名前はactorで代用する", () => {
+    expect(buildTitle(row({ kinds: KIND_CREATED, actor: "大谷", title_hint: "消えた質問" }), undefined))
+      .toBe("大谷: 消えた質問");
+  });
+  it("名前が空なら「名前なし」", () => {
+    expect(buildTitle(row({ kinds: KIND_APPENDED, actor: null }), note({ author: null, body: "質問です" })))
+      .toBe("名前なしが返信: 質問です");
+  });
+});
 
 describe("notifySyncEvents", () => {
   it("新規1件で購読へ届く（本文1行目・authorを含むタイトル）", async () => {

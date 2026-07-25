@@ -1,4 +1,6 @@
 import type { PushSender, SubRow } from "./push-sender";
+import type { NoteRecord } from "./types";
+import { KIND_ANSWERED, KIND_APPENDED, KIND_CREATED, type PendingRow } from "./pending";
 
 export type CreatedEvent = { id: string; author?: string | null; body: string };
 export type AnsweredDoneEvent = { id: string; body: string };
@@ -9,7 +11,7 @@ const CREATED_AGGREGATE_THRESHOLD = 4;
 
 // 本文1行目の抜粋。空行はスキップし、見出し記法(#)は剥がして先頭60字に切り詰める。
 // appのfirstLineTitle（app/src/lib/markdown.ts）相当だが、workerからappへの依存は持ち込めないため個別実装
-function excerpt(body: string): string {
+export function excerpt(body: string): string {
   const line = body.split("\n").find((l) => l.trim() !== "") ?? "";
   const stripped = line.replace(/^#+\s*/, "").trim();
   return stripped === "" ? "(無題)" : stripped.slice(0, 60);
@@ -17,6 +19,37 @@ function excerpt(body: string): string {
 
 function authorLabel(author: string | null | undefined): string {
   return author && author.trim() !== "" ? author : "名前なし";
+}
+
+export type PriorNoteState = { answered: 0 | 1; body: string };
+
+// 通知すべき変化の種類をビットで返す。同期セマンティクス（LWW等）には関与せず、
+// upsert前の状態(prior)と届いたレコードを見るだけの純粋関数。
+// 本文は「文字数が増えたとき」だけ追記とする。差分全般にすると、誤字修正や
+// チェックボックスの切り替え（[ ]→[x]。文字数は変わらない）でも返信通知が飛ぶ
+export function classifyNoteChange(prior: PriorNoteState | null, n: NoteRecord): number {
+  if (n.deleted === 1) return 0;
+  if (prior == null) return KIND_CREATED;
+  let kinds = 0;
+  if (n.body.length > prior.body.length) kinds |= KIND_APPENDED;
+  if (prior.answered === 0 && n.answered === 1) kinds |= KIND_ANSWERED;
+  return kinds;
+}
+
+// 通知1通の見出しを作る。新規が立っていれば他の変化が重なっていても新規として扱い、
+// 名前は変更者ではなく作成者（notes.author）から取る
+export function buildTitle(row: PendingRow, note: NoteRecord | undefined): string {
+  const title = note ? excerpt(note.body) : (row.title_hint ?? "(無題)");
+  if (row.kinds & KIND_CREATED) return `${authorLabel(note?.author ?? row.actor)}: ${title}`;
+  const who = authorLabel(row.actor);
+  // 投稿者本人が書き足した場合は「追記」。本人の補足まで「返信」と出すと、
+  // 回答が来ていないのに来たと読める
+  const isAuthor = note != null && note.author != null && note.author === row.actor;
+  const appended = row.kinds & KIND_APPENDED;
+  const answered = row.kinds & KIND_ANSWERED;
+  if (appended && answered) return `${who}が${isAuthor ? "追記" : "返信"}して対応済みに: ${title}`;
+  if (appended) return `${who}が${isAuthor ? "追記" : "返信"}: ${title}`;
+  return `${who}が対応済みに: ${title}`;
 }
 
 function buildNotifications(events: SyncEvents): { noteId: string; title: string }[] {
