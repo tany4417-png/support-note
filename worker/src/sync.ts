@@ -3,7 +3,7 @@ import type { AttachmentRecord, FolderRecord, NoteRecord, SyncRequest, SyncRespo
 import { makeSender } from "./push-sender";
 import { classifyNoteChange, excerpt, sendPending, type PriorNoteState } from "./notify";
 import {
-  addPending, claimDuePending, clearAnsweredBit, deletePending,
+  addPending, claimDuePending, clearAnsweredBit, deletePending, purgeOrphanPending,
   releaseEditing, touchEditing, type PendingContext,
 } from "./pending";
 
@@ -120,6 +120,9 @@ export async function purgeExpiredTrash(env: Env, now: number): Promise<void> {
   await env.DB.prepare(`DELETE FROM notes WHERE deleted = 1 AND updated_at < ?1`).bind(cutoff).run();
   await env.DB.prepare(`DELETE FROM folders WHERE deleted = 1 AND updated_at < ?1`).bind(cutoff).run();
   await env.DB.prepare(`DELETE FROM purged WHERE purged_at < ?1`).bind(now - PURGED_LOG_RETENTION_MS).run();
+  // 実体が物理削除された保留行を掃除する。通常は削除時のdeletePendingで消えるが、
+  // 期限purgeはnotesを直接消すため、ここで自己修復しておく
+  await purgeOrphanPending(env.DB);
 }
 
 export async function handleSync(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

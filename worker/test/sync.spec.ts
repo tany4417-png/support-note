@@ -424,6 +424,22 @@ describe("同期と通知の連携", () => {
     expect(await pendingRow("n1")).toBeNull();
   });
 
+  it("ゴミ箱のpurgeで実体が消えたら、保留行も消える", async () => {
+    const old = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    await env.DB.prepare(
+      `INSERT INTO notes (id, body, importance, created_at, updated_at, deleted, received_at, author, answered)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    ).bind("gone", "本文", 0, old, old, 1, old, "山田", 0).run();
+    await env.DB.prepare(
+      `INSERT INTO pending_notifications (note_id, kinds, actor, actor_endpoint, title_hint, editing_until, editing_client_id, last_change_at)
+       VALUES (?,?,?,?,?,?,?,?)`
+    ).bind("gone", 1, "山田", null, "本文", Date.now() + 600000, "client-x", old).run();
+
+    await sync({ since: 0, notes: [], attachments: [] });
+
+    expect(await pendingRow("gone")).toBeNull();
+  });
+
   it("購読があっても応答は壊れない（ctx.waitUntil配線のスモーク）", async () => {
     await env.DB.prepare(
       "INSERT INTO push_subscriptions (id, endpoint, p256dh, auth, device_label, created_at) VALUES (?,?,?,?,?,?)"
