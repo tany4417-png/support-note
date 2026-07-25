@@ -238,7 +238,7 @@ describe("hidden側の同期", () => {
   });
 
   it("アプリが背面に回ったときも同期し、editingNoteIdはnullで送る", async () => {
-    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
       if (String(url).startsWith("/api/sync")) return new Response(syncResponseBody(false));
       return new Response("{}");
     });
