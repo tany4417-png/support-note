@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { resetDbForTests } from "./lib/db";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { db, resetDbForTests } from "./lib/db";
 import { setUserName } from "./lib/profile";
 import App from "./App";
 
@@ -126,5 +126,60 @@ describe("App ?note=URL経由の冷起動（マウント時自動同期との競
 
     await waitFor(() => expect(document.querySelector(".note.screen")).not.toBeNull());
     expect(screen.getByText("新着メモ本文")).toBeTruthy();
+  });
+});
+
+describe("編集中メモIDの申告と、閉じたときの同期", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    await resetDbForTests();
+    localStorage.clear();
+    setUserName("山田");
+    localStorage.setItem("supportnote.token", "test-token");
+    fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).startsWith("/api/sync")) return new Response(syncResponseBody(false));
+      return new Response("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function syncBodies() {
+    return fetchMock.mock.calls
+      .filter((c) => String(c[0]).startsWith("/api/sync"))
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string));
+  }
+
+  it("メモ画面を開いている間の同期には editingNoteId が載り、閉じた直後の同期では null になる", async () => {
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "新規" }));
+    await waitFor(() => expect(document.querySelector(".note.screen")).not.toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }));
+
+    await waitFor(() => {
+      const bodies = syncBodies();
+      expect(bodies.length).toBeGreaterThan(1);
+      expect(bodies[bodies.length - 1].editingNoteId).toBeNull();
+    });
+  });
+
+  it("空の新規メモを開いて閉じても、ゴミ箱に残らず物理削除される", async () => {
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "新規" }));
+    await waitFor(() => expect(document.querySelector(".note.screen")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }));
+
+    await waitFor(async () => {
+      expect(await db.notes.count()).toBe(0);
+    });
   });
 });
