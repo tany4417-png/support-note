@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { resetDbForTests } from "./lib/db";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { db, resetDbForTests } from "./lib/db";
 import { setUserName } from "./lib/profile";
 import App from "./App";
 
@@ -126,5 +126,138 @@ describe("App ?note=URL経由の冷起動（マウント時自動同期との競
 
     await waitFor(() => expect(document.querySelector(".note.screen")).not.toBeNull());
     expect(screen.getByText("新着メモ本文")).toBeTruthy();
+  });
+});
+
+describe("編集中メモIDの申告と、閉じたときの同期", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    await resetDbForTests();
+    localStorage.clear();
+    setUserName("山田");
+    localStorage.setItem("supportnote.token", "test-token");
+    fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).startsWith("/api/sync")) return new Response(syncResponseBody(false));
+      return new Response("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function syncBodies() {
+    return fetchMock.mock.calls
+      .filter((c) => String(c[0]).startsWith("/api/sync"))
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string));
+  }
+
+  it("メモ画面を開いている間の同期には editingNoteId が載り、閉じた直後の同期では null になる", async () => {
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "新規" }));
+    await waitFor(() => expect(document.querySelector(".note.screen")).not.toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }));
+
+    await waitFor(() => {
+      const bodies = syncBodies();
+      expect(bodies.length).toBeGreaterThan(1);
+      expect(bodies[bodies.length - 1].editingNoteId).toBeNull();
+    });
+  });
+
+  it("空の新規メモを開いて閉じても、ゴミ箱に残らず物理削除される", async () => {
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "新規" }));
+    await waitFor(() => expect(document.querySelector(".note.screen")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }));
+
+    await waitFor(async () => {
+      expect(await db.notes.count()).toBe(0);
+    });
+  });
+});
+
+describe("syncNowの末尾実行", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    await resetDbForTests();
+    localStorage.clear();
+    setUserName("山田");
+    localStorage.setItem("supportnote.token", "test-token");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("同期の進行中に呼ばれたら、完了後にもう一度走る", async () => {
+    let resolveFirst: ((r: Response) => void) | null = null;
+    let syncCalls = 0;
+    fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (!String(url).startsWith("/api/sync")) return new Response("{}");
+      syncCalls += 1;
+      if (syncCalls === 1) return new Promise<Response>((r) => { resolveFirst = r; });
+      return new Response(syncResponseBody(false));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await waitFor(() => expect(syncCalls).toBe(1));
+
+    // 1回目が飛んでいる間にメモを作って閉じる（＝閉じたときのsyncNowが進行中に当たる）
+    fireEvent.click(screen.getByRole("button", { name: "新規" }));
+    await waitFor(() => expect(document.querySelector(".note.screen")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }));
+
+    // 進行中のリクエストには「閉じた」ことが乗らないので、完了後にもう一度走る必要がある
+    await waitFor(() => expect(resolveFirst).not.toBeNull());
+    resolveFirst!(new Response(syncResponseBody(false)));
+
+    await waitFor(() => expect(syncCalls).toBeGreaterThan(1));
+  });
+});
+
+describe("hidden側の同期", () => {
+  beforeEach(async () => {
+    await resetDbForTests();
+    localStorage.clear();
+    setUserName("山田");
+    localStorage.setItem("supportnote.token", "test-token");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("アプリが背面に回ったときも同期し、editingNoteIdはnullで送る", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(url).startsWith("/api/sync")) return new Response(syncResponseBody(false));
+      return new Response("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "新規" }));
+    await waitFor(() => expect(document.querySelector(".note.screen")).not.toBeNull());
+
+    const callsBefore = fetchMock.mock.calls.length;
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore));
+    const last = JSON.parse((fetchMock.mock.calls[fetchMock.mock.calls.length - 1][1] as RequestInit).body as string);
+    expect(last.editingNoteId).toBeNull();
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   });
 });

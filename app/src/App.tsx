@@ -33,7 +33,7 @@ import { createNote, discardIfEmptyNew, listActiveNotes, purgeExpiredTrashLocal,
 import { getUserName } from "./lib/profile";
 import type { ReorderPlan } from "./lib/reorder";
 import { searchNotes, sortNotes, type SortMode } from "./lib/sort";
-import { runSync } from "./lib/sync";
+import { runSync, setEditingNoteIdRef } from "./lib/sync";
 import { clearUnread, pruneUnread, syncAppBadge } from "./lib/unread";
 
 type View =
@@ -79,10 +79,17 @@ export default function App() {
   // 呼び出し側（openNoteOrFallback等）が「今まさに進行中の同期」の完了を実際に待てるようにするための仕組み
   // （boolean guardだけだと、進行中に呼んだ側は即resolveしてしまい、本物の完了を待てない）
   const syncInFlight = useRef<Promise<void> | null>(null);
+  // 同期の進行中にsyncNowが呼ばれたことを覚えておき、完了後にもう一度走らせるためのフラグ
+  const rerunRequested = useRef(false);
   // 起動時初期化（空メモ掃除等）の完了Promise。syncNowはこれを待ってから走る（下の初期化effect参照）
   const initCleanupRef = useRef<Promise<void>>(Promise.resolve());
   // NoteScreenの未保存draftを戻り遷移の前にflushするための窓口（NoteScreenがマウント中だけ非null）
   const noteFlushRef = useRef<(() => Promise<void>) | null>(null);
+  // 「この端末はいまこのメモを開いています」の申告。lib/sync.tsがリクエスト組み立て時に読む。
+  // サーバーはこの申告がある間そのメモの通知を保留するので、書きかけが他の端末へ飛ばない。
+  // 閉じるときはperformBack内で同期的にnullへ落とす（viewの効果任せにすると、閉じた直後の
+  // 同期に古い申告が乗って通知が5分遅れる）
+  const editingNoteIdRef = useRef<string | null>(null);
   // main（.app）要素そのものへの参照。追従スワイプ中に現在マウント中の.screenをquerySelectorで
   // 見つけてtranslateXを直接書き込む（Reactのstateを介さないため、カード枚数が多い一覧でも重くならない）
   const mainRef = useRef<HTMLElement | null>(null);
@@ -158,6 +165,16 @@ export default function App() {
   );
   const current = view.name === "note" ? notes.find((n) => n.id === view.id) : undefined;
 
+  useEffect(() => {
+    setEditingNoteIdRef(() => editingNoteIdRef.current);
+  }, []);
+
+  // メモ画面を開いている間だけ申告する。他端末での削除を同期で受けて実体が消えた場合は、
+  // 画面が残っていても申告しない（存在しないメモの通知を保留し続けないため）
+  useEffect(() => {
+    editingNoteIdRef.current = view.name === "note" && current ? view.id : null;
+  }, [view, current]);
+
   // 孤児（存在しないフォルダ/親を指すメモ・フォルダ）の安全な救済。旧バージョンのクライアントが
   // folders配列を無視したままlastSyncだけ進めてしまうと、新バージョンが受け取るはずのフォルダ実体が
   // 永遠に届かず、本来は孤児ではないものまで「孤児検出→即ルートへ書き戻す」と誤修復してしまう。
@@ -168,24 +185,31 @@ export default function App() {
     const orphanCount = await countOrphans();
     if (orphanCount === 0) return;
     try {
-      await runSync(token, fetch, { full: true });
+      // 全量押し直しでは、サーバー側に行が無いメモが新規として一斉に積まれる可能性がある
+      // （D1を作り直した直後など）。通知の保留には積ませない
+      await runSync(token, fetch, { full: true, suppressNotify: true });
     } catch {
       // 全量同期に失敗しても、既知の孤児は従来どおり救済しておく
     }
     await repairOrphans();
   }, [token]);
 
-  // 進行中なら新たに走らせず、進行中のPromiseをそのまま返す（呼び出し側はそれをawaitすれば
-  // 本物の同期完了まで待てる）。開始時は本体処理のPromiseをsyncInFlightへ入れ、finallyでnullへ戻す
-  const syncNow = useCallback((): Promise<void> => {
+  // 進行中なら再実行のフラグを立て、進行中のPromiseを返す（呼び出し側はそれをawaitすれば
+  // 末尾実行まで含めた完了を待てる）。進行中のリクエストにはその後の変更が乗らないため、
+  // ただ握りつぶすと「メモ画面を閉じた」ことがサーバーへ届かず、通知が最大5分遅れる。
+  // 開始時は本体処理のPromiseをsyncInFlightへ入れ、finallyでnullへ戻す
+  const syncNow = useCallback((opts?: { keepalive?: boolean }): Promise<void> => {
     if (!token) return Promise.resolve();
-    if (syncInFlight.current) return syncInFlight.current;
+    if (syncInFlight.current) {
+      rerunRequested.current = true;
+      return syncInFlight.current;
+    }
     const p = (async () => {
       setStatus("syncing");
       try {
         // 起動時初期化（空メモ掃除等）が終わる前に同期を始めない（初期化effectのコメント参照）
         await initCleanupRef.current;
-        const result = await runSync(token);
+        const result = await runSync(token, fetch, { keepalive: opts?.keepalive });
         setFailedAttachments(result.failedAttachments);
         await repairOrphansSafely();
         // ゴミ箱行き・他端末削除・フォルダごと削除の未読をここで一括掃除する
@@ -198,10 +222,20 @@ export default function App() {
       } finally {
         syncInFlight.current = null;
       }
+      // 進行中に呼ばれた分をここで消化する。返すPromiseはこの再実行まで含めて解決するので、
+      // await syncNow() している呼び出し側（通知タップの空振り対策）は最新の状態まで待てる
+      if (rerunRequested.current) {
+        rerunRequested.current = false;
+        await syncNowRef.current();
+      }
     })();
     syncInFlight.current = p;
     return p;
   }, [token, repairOrphansSafely]);
+
+  // 末尾実行から自分自身を呼ぶための窓口（useCallbackの循環参照を避ける）
+  const syncNowRef = useRef(syncNow);
+  useEffect(() => { syncNowRef.current = syncNow; }, [syncNow]);
 
   const scheduleSync = useCallback(() => {
     window.clearTimeout(timer.current);
@@ -271,7 +305,13 @@ export default function App() {
     // （アプリ切替・スリープ等）。可視状態に戻ってから固まって見えないよう、hidden時に強制リセットする
     const onVisible = () => {
       if (document.visibilityState === "visible") void syncNow();
-      else resetBackSwipe();
+      else {
+        resetBackSwipe();
+        // アプリを閉じる操作の取りこぼしを減らす。編集セッションも終わりとみなして申告を外す
+        // （非nullのまま送るとサーバー側の申告が5分延び、通知を保留し続けて目的と逆に働く）
+        editingNoteIdRef.current = null;
+        void syncNow({ keepalive: true });
+      }
     };
     // window blur（他アプリへのフォーカス移動等）でも同様に追従状態を強制リセットする
     const onBlur = () => resetBackSwipe();
@@ -430,19 +470,26 @@ export default function App() {
         // fire-and-forget: 一覧のliveQueryが削除完了時に再発火するため、遷移をawaitで遅らせない
         const isNewNote = view.isNew === true;
         const noteId = view.id;
+        // 申告は同期的に落とす。この直後に走る同期へ「閉じた」ことを確実に伝えるため
+        editingNoteIdRef.current = null;
         void (async () => {
           try {
             await noteFlushRef.current?.();
           } catch {
             // IndexedDB障害等。保存できなかった分は次の編集機会まで諦める（従来の保存押し忘れと同等）
           }
-          if (!isNewNote) return;
-          try {
-            const r = await discardIfEmptyNew(noteId, { preferTrash: syncInFlight.current !== null });
-            if (r === "trashed") scheduleSync();
-          } catch {
-            // IndexedDB障害等はここで握りつぶす（残った空メモは次回起動時の掃除で回収される）
+          if (isNewNote) {
+            try {
+              // discardIfEmptyNewより先に同期を始めるとsyncInFlightが非nullになり、preferTrashが
+              // 常に真になって、空メモが物理削除されずゴミ箱へ溜まり続ける。順序を守ること
+              await discardIfEmptyNew(noteId, { preferTrash: syncInFlight.current !== null });
+            } catch {
+              // IndexedDB障害等はここで握りつぶす（残った空メモは次回起動時の掃除で回収される）
+            }
           }
+          // 3秒のデバウンスを待つ間にアプリを閉じられると、申告を外すリクエストが飛ばないまま
+          // 最大5分（サーバー側の申告の有効期間）通知が遅れる。閉じたときは即時に送る
+          void syncNow();
         })();
         setView({ name: "list" });
         return;
@@ -464,7 +511,7 @@ export default function App() {
         setCurrentFolderId(parent);
       }
     },
-    [view, currentFolderId, folderPathList, scheduleSync]
+    [view, currentFolderId, folderPathList, syncNow]
   );
 
   // ボタン・パンくず経由の「戻る」。バックスワイプの完了とは異なり、従来どおりスライドインを再生する

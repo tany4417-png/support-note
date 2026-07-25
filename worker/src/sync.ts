@@ -1,7 +1,11 @@
 import type { Env } from "./index";
 import type { AttachmentRecord, FolderRecord, NoteRecord, SyncRequest, SyncResponse } from "./types";
 import { makeSender } from "./push-sender";
-import { notifySyncEvents, type SyncEvents } from "./notify";
+import { classifyNoteChange, excerpt, sendPending, type PriorNoteState } from "./notify";
+import {
+  addPending, claimDuePending, clearAnsweredBit, deletePending, purgeOrphanPending,
+  releaseEditing, touchEditing, type PendingContext,
+} from "./pending";
 
 async function isPurged(db: D1Database, id: string): Promise<boolean> {
   const row = await db.prepare(`SELECT 1 FROM purged WHERE id = ?1`).bind(id).first();
@@ -27,23 +31,6 @@ export async function upsertNote(db: D1Database, n: NoteRecord): Promise<UpsertR
     WHERE excluded.updated_at > notes.updated_at`;
   const res = await db.prepare(sql).bind(...vals).run();
   return (res.meta.changes ?? 0) > 0 ? "applied" : "stale";
-}
-
-export type PriorNoteState = { answered: 0 | 1 };
-
-// 新着通知/対応済み通知のためのイベント判定。同期セマンティクス（LWW等）には関与せず、
-// upsertNote適用結果とupsert前の状態(prior)を観察するだけの純粋関数。
-// (a) prior無し・applied・n.deleted===0 → created（新規メモ。到着時点で削除済みのものは対象外）
-// (b) priorあり・prior.answered===0・n.answered===1・applied → answeredDone（未対応→対応済みの遷移）
-export function classifySyncEvent(
-  prior: PriorNoteState | null,
-  result: UpsertResult,
-  n: NoteRecord
-): "created" | "answeredDone" | null {
-  if (result !== "applied") return null;
-  if (prior == null) return n.deleted === 0 ? "created" : null;
-  if (prior.answered === 0 && n.answered === 1) return "answeredDone";
-  return null;
 }
 
 export async function upsertAttachment(db: D1Database, a: AttachmentRecord): Promise<boolean> {
@@ -133,6 +120,9 @@ export async function purgeExpiredTrash(env: Env, now: number): Promise<void> {
   await env.DB.prepare(`DELETE FROM notes WHERE deleted = 1 AND updated_at < ?1`).bind(cutoff).run();
   await env.DB.prepare(`DELETE FROM folders WHERE deleted = 1 AND updated_at < ?1`).bind(cutoff).run();
   await env.DB.prepare(`DELETE FROM purged WHERE purged_at < ?1`).bind(now - PURGED_LOG_RETENTION_MS).run();
+  // 実体が物理削除された保留行を掃除する。通常は削除時のdeletePendingで消えるが、
+  // 期限purgeはnotesを直接消すため、ここで自己修復しておく
+  await purgeOrphanPending(env.DB);
 }
 
 export async function handleSync(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -140,17 +130,37 @@ export async function handleSync(req: Request, env: Env, ctx: ExecutionContext):
   const now = Date.now();
   await purgeExpiredTrash(env, now);
   const purgedIds: string[] = [];
-  const events: SyncEvents = { created: [], answeredDone: [] };
+  const pctx: PendingContext = {
+    clientId: body.clientId ?? null,
+    actorName: body.actorName ?? null,
+    selfEndpoint: body.selfEndpoint ?? null,
+    editingNoteId: body.editingNoteId ?? null,
+    now,
+  };
+  const suppressNotify = body.suppressNotify === true;
   for (const n of body.notes ?? []) {
-    // upsert前の状態を読んでおく（新着/対応済み遷移の判定用。upsert自体はここでは何も参照しない）
-    const prior = await env.DB.prepare(`SELECT answered FROM notes WHERE id=?1`)
+    // upsert前の状態を読んでおく（変化の判定用。upsert自体はここでは何も参照しない）
+    const prior = await env.DB.prepare(`SELECT answered, body FROM notes WHERE id=?1`)
       .bind(n.id).first<PriorNoteState>();
     const result = await upsertNote(env.DB, n);
     if (result === "purged") { purgedIds.push(n.id); continue; }
-    const kind = classifySyncEvent(prior, result, n);
-    if (kind === "created") events.created.push({ id: n.id, author: n.author, body: n.body });
-    else if (kind === "answeredDone") events.answeredDone.push({ id: n.id, body: n.body });
+    if (result !== "applied") continue;
+    if (n.deleted === 1) {
+      // 未通知のまま消えたメモを後から通知しない
+      await deletePending(env.DB, n.id);
+      continue;
+    }
+    if (!suppressNotify) {
+      const kinds = classifyNoteChange(prior, n);
+      if (kinds !== 0) await addPending(env.DB, n.id, kinds, excerpt(n.body), pctx);
+    }
+    // 対応済みから未対応へ戻したら、未送信の対応済み通知を取り消す
+    if (prior && prior.answered === 1 && n.answered === 0) await clearAnsweredBit(env.DB, n.id);
   }
+  // 本文を変えずにメモ画面を開いたままの端末でも、既存の保留行の申告を延長する
+  await touchEditing(env.DB, pctx);
+  // 申告の解除は、変更の有無やsuppressNotifyに関わらず必ず行う
+  await releaseEditing(env.DB, pctx);
   for (const a of body.attachments ?? []) {
     if (!(await upsertAttachment(env.DB, a))) purgedIds.push(a.id);
   }
@@ -194,8 +204,19 @@ export async function handleSync(req: Request, env: Env, ctx: ExecutionContext):
     ],
     purgedIds,
   };
-  if (events.created.length > 0 || events.answeredDone.length > 0) {
-    ctx.waitUntil(notifySyncEvents(env.DB, makeSender(env), events, body.selfEndpoint ?? null));
+  const due = await claimDuePending(env.DB, now);
+  if (due.length > 0) {
+    // 見出しは確定後の本文から作る。実体が消えていればtitle_hintを使う（sendPending内で分岐）
+    const notesById = new Map<string, NoteRecord>();
+    for (const r of due) {
+      const cur = await env.DB.prepare(`SELECT * FROM notes WHERE id=?1`).bind(r.note_id).first<NoteRow>();
+      if (cur) notesById.set(r.note_id, {
+        id: cur.id, body: cur.body, importance: cur.importance, createdAt: cur.created_at,
+        updatedAt: cur.updated_at, deleted: cur.deleted, folderId: cur.folder_id, orderKey: cur.order_key,
+        author: cur.author, answered: cur.answered,
+      });
+    }
+    ctx.waitUntil(sendPending(env.DB, makeSender(env), due, notesById, body.selfEndpoint ?? null));
   }
   return Response.json(res);
 }
