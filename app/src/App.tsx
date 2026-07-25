@@ -79,6 +79,8 @@ export default function App() {
   // 呼び出し側（openNoteOrFallback等）が「今まさに進行中の同期」の完了を実際に待てるようにするための仕組み
   // （boolean guardだけだと、進行中に呼んだ側は即resolveしてしまい、本物の完了を待てない）
   const syncInFlight = useRef<Promise<void> | null>(null);
+  // 同期の進行中にsyncNowが呼ばれたことを覚えておき、完了後にもう一度走らせるためのフラグ
+  const rerunRequested = useRef(false);
   // 起動時初期化（空メモ掃除等）の完了Promise。syncNowはこれを待ってから走る（下の初期化effect参照）
   const initCleanupRef = useRef<Promise<void>>(Promise.resolve());
   // NoteScreenの未保存draftを戻り遷移の前にflushするための窓口（NoteScreenがマウント中だけ非null）
@@ -192,17 +194,22 @@ export default function App() {
     await repairOrphans();
   }, [token]);
 
-  // 進行中なら新たに走らせず、進行中のPromiseをそのまま返す（呼び出し側はそれをawaitすれば
-  // 本物の同期完了まで待てる）。開始時は本体処理のPromiseをsyncInFlightへ入れ、finallyでnullへ戻す
-  const syncNow = useCallback((): Promise<void> => {
+  // 進行中なら再実行のフラグを立て、進行中のPromiseを返す（呼び出し側はそれをawaitすれば
+  // 末尾実行まで含めた完了を待てる）。進行中のリクエストにはその後の変更が乗らないため、
+  // ただ握りつぶすと「メモ画面を閉じた」ことがサーバーへ届かず、通知が最大5分遅れる。
+  // 開始時は本体処理のPromiseをsyncInFlightへ入れ、finallyでnullへ戻す
+  const syncNow = useCallback((opts?: { keepalive?: boolean }): Promise<void> => {
     if (!token) return Promise.resolve();
-    if (syncInFlight.current) return syncInFlight.current;
+    if (syncInFlight.current) {
+      rerunRequested.current = true;
+      return syncInFlight.current;
+    }
     const p = (async () => {
       setStatus("syncing");
       try {
         // 起動時初期化（空メモ掃除等）が終わる前に同期を始めない（初期化effectのコメント参照）
         await initCleanupRef.current;
-        const result = await runSync(token);
+        const result = await runSync(token, fetch, { keepalive: opts?.keepalive });
         setFailedAttachments(result.failedAttachments);
         await repairOrphansSafely();
         // ゴミ箱行き・他端末削除・フォルダごと削除の未読をここで一括掃除する
@@ -215,10 +222,20 @@ export default function App() {
       } finally {
         syncInFlight.current = null;
       }
+      // 進行中に呼ばれた分をここで消化する。返すPromiseはこの再実行まで含めて解決するので、
+      // await syncNow() している呼び出し側（通知タップの空振り対策）は最新の状態まで待てる
+      if (rerunRequested.current) {
+        rerunRequested.current = false;
+        await syncNowRef.current();
+      }
     })();
     syncInFlight.current = p;
     return p;
   }, [token, repairOrphansSafely]);
+
+  // 末尾実行から自分自身を呼ぶための窓口（useCallbackの循環参照を避ける）
+  const syncNowRef = useRef(syncNow);
+  useEffect(() => { syncNowRef.current = syncNow; }, [syncNow]);
 
   const scheduleSync = useCallback(() => {
     window.clearTimeout(timer.current);
@@ -288,7 +305,13 @@ export default function App() {
     // （アプリ切替・スリープ等）。可視状態に戻ってから固まって見えないよう、hidden時に強制リセットする
     const onVisible = () => {
       if (document.visibilityState === "visible") void syncNow();
-      else resetBackSwipe();
+      else {
+        resetBackSwipe();
+        // アプリを閉じる操作の取りこぼしを減らす。編集セッションも終わりとみなして申告を外す
+        // （非nullのまま送るとサーバー側の申告が5分延び、通知を保留し続けて目的と逆に働く）
+        editingNoteIdRef.current = null;
+        void syncNow({ keepalive: true });
+      }
     };
     // window blur（他アプリへのフォーカス移動等）でも同様に追従状態を強制リセットする
     const onBlur = () => resetBackSwipe();
