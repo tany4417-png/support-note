@@ -1,5 +1,7 @@
 import { db } from "./db";
 import { thumbKey } from "./attachments";
+import { getClientId } from "./client-id";
+import { getUserName } from "./profile";
 import type { AttachmentMeta, Folder, Note, SyncResponse } from "./types";
 
 export type SyncResult = { pushed: number; pulled: number; failedAttachments: number };
@@ -27,6 +29,14 @@ async function getSelfEndpoint(): Promise<string | null> {
   }
 }
 
+// 編集中のメモIDの読み取り口。App.tsxが起動時に登録する。
+// 引数で渡さないのは、runSyncの呼び出し口が2か所（通常同期と孤児救済の全量同期）あり、
+// 片方への追加を忘れると申告なしのリクエストが飛んで、書きかけの通知が送られてしまうため
+let readEditingNoteId: () => string | null = () => null;
+export function setEditingNoteIdRef(read: () => string | null): void {
+  readEditingNoteId = read;
+}
+
 function stripNote(n: Note) {
   const { dirty: _dirty, ...rest } = n;
   return rest;
@@ -45,7 +55,7 @@ function stripFolder(f: Folder) {
 export async function runSync(
   token: string,
   fetchFn: typeof fetch = fetch,
-  options?: { full?: boolean }
+  options?: { full?: boolean; suppressNotify?: boolean }
 ): Promise<SyncResult> {
   // 旧バージョンのクライアントがfolders配列を無視したままlastSyncだけ進めてしまうと、新バージョンに
   // 更新してもサーバーは「送信済み」と判断し、以後foldersが二度と届かない。fullResyncV4フラグが
@@ -93,6 +103,7 @@ export async function runSync(
   }
 
   const selfEndpoint = await getSelfEndpoint();
+  const clientId = await getClientId();
   const res = await fetchFn("/api/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -102,6 +113,12 @@ export async function runSync(
       attachments: dirtyAtts.map(stripAtt),
       folders: dirtyFolders.map(stripFolder),
       selfEndpoint,
+      clientId,
+      actorName: getUserName(),
+      editingNoteId: readEditingNoteId(),
+      // 上のfullは fullResyncV4 未設定でも真になるため連動させない。連動させると、初回同期に
+      // 失敗したまま最初の質問を書いた端末で、その質問が誰にも通知されない
+      suppressNotify: options?.suppressNotify === true,
     }),
   });
   if (!res.ok) throw new Error(`sync failed: ${res.status}`);
