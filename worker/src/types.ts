@@ -44,5 +44,14 @@ export type SyncRequest = {
   // 同期時サーバープッシュ通知の送信先から自分自身の端末を除外するための購読endpoint。
   // 未対応環境・未購読・取得失敗はnull（appのgetSelfEndpointがtry/catchで握る）
   selfEndpoint?: string | null;
+  // 端末の識別子。編集中の申告が誰のものかの判定に使う。購読endpointは未購読端末でnullに
+  // なるため使えない（NULL比較で解除が効かないか、無関係な端末どうしが互いの申告を解除する）
+  clientId?: string | null;
+  // 通知文の「誰が」に使う名前（端末ローカルの自己申告）
+  actorName?: string | null;
+  // その端末がいまメモ画面で開いているメモのid。開いていなければnull
+  editingNoteId?: string | null;
+  // 真のとき、このリクエストの変更を通知の保留に積まない（孤児救済の全量押し直し専用）
+  suppressNotify?: boolean;
 };
 export type SyncResponse = { now: number; notes: NoteRecord[]; attachments: AttachmentRecord[]; folders: FolderRecord[]; purgedIds: string[] };

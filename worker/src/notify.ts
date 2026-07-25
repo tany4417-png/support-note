@@ -2,13 +2,6 @@ import type { PushSender, SubRow } from "./push-sender";
 import type { NoteRecord } from "./types";
 import { KIND_ANSWERED, KIND_APPENDED, KIND_CREATED, type PendingRow } from "./pending";
 
-export type CreatedEvent = { id: string; author?: string | null; body: string };
-export type AnsweredDoneEvent = { id: string; body: string };
-export type SyncEvents = { created: CreatedEvent[]; answeredDone: AnsweredDoneEvent[] };
-
-// createdがこの件数以上のときは個別送信をやめ「新着 N件」1通に集約する
-const CREATED_AGGREGATE_THRESHOLD = 4;
-
 // 本文1行目の抜粋。空行はスキップし、見出し記法(#)は剥がして先頭60字に切り詰める。
 // appのfirstLineTitle（app/src/lib/markdown.ts）相当だが、workerからappへの依存は持ち込めないため個別実装
 export function excerpt(body: string): string {
@@ -50,49 +43,6 @@ export function buildTitle(row: PendingRow, note: NoteRecord | undefined): strin
   if (appended && answered) return `${who}が${isAuthor ? "追記" : "返信"}して対応済みに: ${title}`;
   if (appended) return `${who}が${isAuthor ? "追記" : "返信"}: ${title}`;
   return `${who}が対応済みに: ${title}`;
-}
-
-function buildNotifications(events: SyncEvents): { noteId: string; title: string }[] {
-  const notes: { noteId: string; title: string }[] = [];
-  if (events.created.length >= CREATED_AGGREGATE_THRESHOLD) {
-    notes.push({ noteId: events.created[0].id, title: `新着 ${events.created.length}件` });
-  } else {
-    for (const c of events.created) {
-      notes.push({ noteId: c.id, title: `${authorLabel(c.author)}: ${excerpt(c.body)}` });
-    }
-  }
-  for (const a of events.answeredDone) {
-    notes.push({ noteId: a.id, title: `対応済み: ${excerpt(a.body)}` });
-  }
-  return notes;
-}
-
-// 同期処理中に観察された新着/対応済み遷移を、購読中の他端末へWeb Pushで通知する。
-// 1件の送信失敗（例外含む）が他の購読への送信・全体の完走を妨げないこと、selfEndpointの
-// 除外、404/410購読の自動削除がこの関数の責務。同期セマンティクス（LWW等）には一切関与しない
-export async function notifySyncEvents(
-  db: D1Database,
-  send: PushSender,
-  events: SyncEvents,
-  selfEndpoint?: string | null
-): Promise<void> {
-  const notifications = buildNotifications(events);
-  if (notifications.length === 0) return;
-  const subsRes = await db.prepare("SELECT id, endpoint, p256dh, auth FROM push_subscriptions").all<SubRow>();
-  const subs = subsRes.results.filter((s) => s.endpoint !== selfEndpoint);
-  if (subs.length === 0) return;
-  for (const n of notifications) {
-    const payload = JSON.stringify({ noteId: n.noteId, title: n.title });
-    for (const sub of subs) {
-      const res = await send(sub, payload).catch(() => ({ ok: false as const, status: 0 }));
-      if (!res.ok && (res.status === 404 || res.status === 410)) {
-        // DELETE自体の失敗（D1の一時エラー等）でループを中断させない。消し損ねた行は
-        // 次回以降の送信失敗時に再度DELETEが試みられるため、ここでは握りつぶして継続する
-        await db.prepare("DELETE FROM push_subscriptions WHERE id=?").bind(sub.id).run().catch(() => {});
-      }
-      // 404/410以外の失敗は無視する（再送なし）。1件の失敗が他の送信・tickの完走を止めない
-    }
-  }
 }
 
 // 1回の送信でこの件数以上になったら、個別送信をやめて「更新 N件」1通に集約する。

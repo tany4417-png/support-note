@@ -1,6 +1,5 @@
 import { SELF, env } from "cloudflare:test";
 import { describe, it, expect, afterEach } from "vitest";
-import { classifySyncEvent } from "../src/sync";
 
 const AUTH = { "Content-Type": "application/json", Authorization: "Bearer test-token" };
 
@@ -348,57 +347,89 @@ describe("/api/sync", () => {
   });
 });
 
-describe("classifySyncEvent（新着/対応済み通知イベントの判定）", () => {
-  function n(over: Record<string, unknown> = {}) {
-    return {
-      id: "N1", body: "本文", importance: 0, createdAt: 100, updatedAt: 100, deleted: 0 as const,
-      answered: 0 as const, ...over,
-    };
-  }
+describe("同期と通知の連携", () => {
+  const clientA = { clientId: "client-a", actorName: "山田", selfEndpoint: "https://push.example/a" };
 
-  it("prior無し・applied・deleted=0 は created", () => {
-    expect(classifySyncEvent(null, "applied", n())).toBe("created");
+  afterEach(async () => {
+    await env.DB.prepare("DELETE FROM notes").run();
+    await env.DB.prepare("DELETE FROM purged").run();
+    await env.DB.prepare("DELETE FROM pending_notifications").run();
+    await env.DB.prepare("DELETE FROM push_subscriptions").run();
   });
 
-  it("prior無し・applied・deleted=1（削除済みとして初到着）は通知しない", () => {
-    expect(classifySyncEvent(null, "applied", n({ deleted: 1 }))).toBeNull();
+  const pendingRow = (id: string) =>
+    env.DB.prepare("SELECT * FROM pending_notifications WHERE note_id=?").bind(id).first();
+
+  it("メモ画面を開いたまま届いた新規メモは、保留されて送られない", async () => {
+    await sync({ since: 0, notes: [note({ id: "n1", body: "書きかけ" })], attachments: [],
+      ...clientA, editingNoteId: "n1" });
+    expect(await pendingRow("n1")).not.toBeNull();
   });
 
-  it("prior無し・stale（本来起こらないが念のため）は通知しない", () => {
-    expect(classifySyncEvent(null, "stale", n())).toBeNull();
+  it("別の端末が同期しても、申告のあるメモの保留は残る", async () => {
+    await sync({ since: 0, notes: [note({ id: "n1", body: "書きかけ" })], attachments: [],
+      ...clientA, editingNoteId: "n1" });
+    await sync({ since: 0, notes: [], attachments: [], clientId: "client-b", actorName: "大谷",
+      selfEndpoint: "https://push.example/b", editingNoteId: null });
+    expect(await pendingRow("n1")).not.toBeNull();
   });
 
-  it("既存メモの本文だけの編集（answered不変）は通知しない", () => {
-    // brief Step1 (4): 本文だけの編集では届かない
-    const prior = { answered: 0 as const };
-    expect(classifySyncEvent(prior, "applied", n({ body: "編集後の本文" }))).toBeNull();
+  it("申告を外して同期すると保留が消える（送信対象として確保される）", async () => {
+    await sync({ since: 0, notes: [note({ id: "n1", body: "書きかけ" })], attachments: [],
+      ...clientA, editingNoteId: "n1" });
+    await sync({ since: 0, notes: [], attachments: [], ...clientA, editingNoteId: null });
+    expect(await pendingRow("n1")).toBeNull();
   });
 
-  it("prior.answered=0 かつ n.answered=1 かつ applied は answeredDone", () => {
-    const prior = { answered: 0 as const };
-    expect(classifySyncEvent(prior, "applied", n({ answered: 1 }))).toBe("answeredDone");
+  it("別のメモを開いても、前のメモの申告は解除される", async () => {
+    await sync({ since: 0, notes: [note({ id: "n1", body: "1件目" })], attachments: [],
+      ...clientA, editingNoteId: "n1" });
+    await sync({ since: 0, notes: [], attachments: [], ...clientA, editingNoteId: "n2" });
+    expect(await pendingRow("n1")).toBeNull();
   });
 
-  it("n.answeredがundefined（answeredフィールド自体を持たない旧クライアント相当のpush）はanansweredDoneに分類されない", () => {
-    // 旧クライアントはansweredフィールド自体を送らないことがある（upsertNoteはこの場合answeredを
-    // 現状維持する）。n.answered === 1 の厳密一致判定により、undefinedはfalseとなり誤分類されないことを確認する
-    const prior = { answered: 0 as const };
-    const { answered: _omit, ...legacyNote } = n();
-    expect(classifySyncEvent(prior, "applied", legacyNote)).toBeNull();
+  it("申告のない新規メモは、その場で確保されて保留が残らない", async () => {
+    await sync({ since: 0, notes: [note({ id: "n1", body: "質問" })], attachments: [],
+      ...clientA, editingNoteId: null });
+    expect(await pendingRow("n1")).toBeNull();
   });
 
-  it("既に対応済み(answered=1)のメモをそのまま編集しても通知しない", () => {
-    const prior = { answered: 1 as const };
-    expect(classifySyncEvent(prior, "applied", n({ answered: 1, body: "編集" }))).toBeNull();
+  it("suppressNotifyが真なら保留を積まないが、申告の解除は行う", async () => {
+    await sync({ since: 0, notes: [note({ id: "n1", body: "書きかけ" })], attachments: [],
+      ...clientA, editingNoteId: "n1" });
+    await sync({ since: 0, notes: [note({ id: "n2", body: "全量押し直し" })], attachments: [],
+      ...clientA, editingNoteId: null, suppressNotify: true });
+    expect(await pendingRow("n2")).toBeNull();
+    expect(await pendingRow("n1")).toBeNull();
   });
 
-  it("対応済みから未対応へ戻す変更は通知しない（対応済み遷移ではない）", () => {
-    const prior = { answered: 1 as const };
-    expect(classifySyncEvent(prior, "applied", n({ answered: 0 }))).toBeNull();
+  it("ゴミ箱に入れると未送信の保留が消える", async () => {
+    const n = note({ id: "n1", body: "質問" });
+    await sync({ since: 0, notes: [n], attachments: [], ...clientA, editingNoteId: "n1" });
+    await sync({ since: 0, notes: [{ ...n, deleted: 1, updatedAt: 200 }], attachments: [],
+      ...clientA, editingNoteId: "n1" });
+    expect(await pendingRow("n1")).toBeNull();
   });
 
-  it("対応済み遷移でもLWW負け(stale)なら通知しない", () => {
-    const prior = { answered: 0 as const };
-    expect(classifySyncEvent(prior, "stale", n({ answered: 1 }))).toBeNull();
+  it("既存メモを対応済みにしてすぐ未対応へ戻すと、保留が消える", async () => {
+    const n = note({ id: "n1", body: "質問", answered: 0 });
+    // 1回目は申告なしで送り、新規の保留をその場で確保させる（＝以後の変化だけを見る）
+    await sync({ since: 0, notes: [n], attachments: [], ...clientA, editingNoteId: null });
+    expect(await pendingRow("n1")).toBeNull();
+    await sync({ since: 0, notes: [{ ...n, answered: 1, updatedAt: 200 }], attachments: [],
+      ...clientA, editingNoteId: "n1" });
+    expect(await pendingRow("n1")).not.toBeNull();
+    await sync({ since: 0, notes: [{ ...n, answered: 0, updatedAt: 300 }], attachments: [],
+      ...clientA, editingNoteId: "n1" });
+    expect(await pendingRow("n1")).toBeNull();
+  });
+
+  it("購読があっても応答は壊れない（ctx.waitUntil配線のスモーク）", async () => {
+    await env.DB.prepare(
+      "INSERT INTO push_subscriptions (id, endpoint, p256dh, auth, device_label, created_at) VALUES (?,?,?,?,?,?)"
+    ).bind("sub1", "https://push.example/sub1", "k", "a", "test", 1).run();
+    const res = await sync({ since: 0, notes: [note({ id: "NOTIFYME", author: "山田" })], attachments: [],
+      ...clientA, editingNoteId: null });
+    expect(res.status).toBe(200);
   });
 });
