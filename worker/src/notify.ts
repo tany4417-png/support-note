@@ -75,12 +75,14 @@ function planNotifications(rows: PendingRow[], notesById: Map<string, NoteRecord
 // 確保済みの保留行を購読中の端末へ送る。1件の送信失敗（例外含む）が他の購読への送信を
 // 妨げないこと、変更者の端末の除外、404/410購読の自動削除がこの関数の責務。
 // 同期セマンティクス（LWW等）には一切関与しない
+// 除外は行ごとの actor_endpoint（＝その変化を起こした端末）だけで行う。同期リクエストの
+// 送信元（selfEndpoint）は除外しない。5分の期限切れで回収されるときは、変化を起こした人と
+// 同期を送ってきた人が別人になるため、送信元まで外すと無関係な端末が通知を取りこぼす
 export async function sendPending(
   db: D1Database,
   send: PushSender,
   rows: PendingRow[],
-  notesById: Map<string, NoteRecord>,
-  selfEndpoint: string | null
+  notesById: Map<string, NoteRecord>
 ): Promise<void> {
   if (rows.length === 0) return;
   const subsRes = await db.prepare("SELECT id, endpoint, p256dh, auth FROM push_subscriptions").all<SubRow>();
@@ -89,7 +91,7 @@ export async function sendPending(
   for (const n of planNotifications(rows, notesById, subs)) {
     const payload = JSON.stringify({ noteId: n.noteId, title: n.title });
     for (const sub of subs) {
-      if (n.exclude.has(sub.endpoint) || sub.endpoint === selfEndpoint) continue;
+      if (n.exclude.has(sub.endpoint)) continue;
       const res = await send(sub, payload).catch(() => ({ ok: false as const, status: 0 }));
       if (!res.ok && (res.status === 404 || res.status === 410)) {
         // DELETE自体の失敗（D1の一時エラー等）でループを中断させない。消し損ねた行は

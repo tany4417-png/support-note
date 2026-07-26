@@ -121,7 +121,7 @@ describe("sendPending", () => {
   it("変更した端末以外の全購読へ送る", async () => {
     await addSub("s1"); await addSub("s2");
     const { send, calls } = recordingSender();
-    await sendPending(env.DB, send, [row({ actor_endpoint: "https://push.example/s1" })], new Map(), null);
+    await sendPending(env.DB, send, [row({ actor_endpoint: "https://push.example/s1" })], new Map());
     expect(calls.map((c) => c.sub.id)).toEqual(["s2"]);
   });
 
@@ -129,14 +129,14 @@ describe("sendPending", () => {
     await addSub("phone", "https://push.example/phone");
     await addSub("pc", "https://push.example/pc");
     const { send, calls } = recordingSender();
-    await sendPending(env.DB, send, [row({ actor_endpoint: "https://push.example/pc" })], new Map(), null);
+    await sendPending(env.DB, send, [row({ actor_endpoint: "https://push.example/pc" })], new Map());
     expect(calls.map((c) => c.sub.id)).toEqual(["phone"]);
   });
 
   it("payloadはnoteIdとtitleを持つ", async () => {
     await addSub("s1");
     const { send, calls } = recordingSender();
-    await sendPending(env.DB, send, [row({ note_id: "n9", actor: "大谷", kinds: KIND_APPENDED })], new Map(), null);
+    await sendPending(env.DB, send, [row({ note_id: "n9", actor: "大谷", kinds: KIND_APPENDED })], new Map());
     expect(JSON.parse(calls[0].payload)).toEqual({ noteId: "n9", title: "大谷が返信: 控え" });
   });
 
@@ -147,7 +147,7 @@ describe("sendPending", () => {
       row({ note_id: "a", last_change_at: 300 }), row({ note_id: "b", last_change_at: 100 }),
       row({ note_id: "c", last_change_at: 200 }), row({ note_id: "d", last_change_at: 400 }),
     ];
-    await sendPending(env.DB, send, rows, new Map(), null);
+    await sendPending(env.DB, send, rows, new Map());
     expect(calls.length).toBe(1);
     expect(JSON.parse(calls[0].payload)).toEqual({ noteId: "b", title: "更新 4件" });
   });
@@ -163,7 +163,7 @@ describe("sendPending", () => {
       row({ note_id: "c", actor_endpoint: "https://push.example/s1" }),
       row({ note_id: "d", actor_endpoint: "https://push.example/s2" }),
     ];
-    await sendPending(env.DB, send, rows, new Map(), null);
+    await sendPending(env.DB, send, rows, new Map());
     expect(calls.length).toBe(1);
     expect(calls[0].sub.id).toBe("s3");
   });
@@ -178,7 +178,7 @@ describe("sendPending", () => {
       row({ note_id: "c", actor_endpoint: "https://push.example/s1" }),
       row({ note_id: "d", actor_endpoint: "https://push.example/s2" }),
     ];
-    await sendPending(env.DB, send, rows, new Map(), null);
+    await sendPending(env.DB, send, rows, new Map());
     // 4行それぞれが、自分の変更者以外の1台へ送られる
     expect(calls.length).toBe(4);
   });
@@ -186,7 +186,7 @@ describe("sendPending", () => {
   it("410の購読は行ごと削除される", async () => {
     await addSub("s1");
     const { send } = recordingSender({ ok: false, status: 410 });
-    await sendPending(env.DB, send, [row()], new Map(), null);
+    await sendPending(env.DB, send, [row()], new Map());
     expect(await subExists("s1")).toBe(false);
   });
 
@@ -198,7 +198,7 @@ describe("sendPending", () => {
       if (sub.id === "s1") throw new Error("boom");
       return { ok: true };
     };
-    await sendPending(env.DB, send, [row()], new Map(), null);
+    await sendPending(env.DB, send, [row()], new Map());
     expect(calls).toEqual(["s1", "s2"]);
   });
 
@@ -206,14 +206,24 @@ describe("sendPending", () => {
     await addSub("s1");
     const { send, calls } = recordingSender();
     const notes = new Map([["n1", note({ body: "確定した質問文", author: "山田" })]]);
-    await sendPending(env.DB, send, [row({ kinds: KIND_CREATED, title_hint: "書きかけ" })], notes, null);
+    await sendPending(env.DB, send, [row({ kinds: KIND_CREATED, title_hint: "書きかけ" })], notes);
     expect(JSON.parse(calls[0].payload).title).toBe("山田: 確定した質問文");
+  });
+
+  it("同期を送ってきた端末でも、自分が変えていない分の通知は受け取る", async () => {
+    // 5分の期限切れで回収されるときは、変化を起こした人と同期を送ってきた人が別人になる。
+    // 送信元まで除外すると、回収の引き金を引いただけの端末が通知を取りこぼす
+    await addSub("writer", "https://push.example/writer");
+    await addSub("syncer", "https://push.example/syncer");
+    const { send, calls } = recordingSender();
+    await sendPending(env.DB, send, [row({ actor_endpoint: "https://push.example/writer" })], new Map());
+    expect(calls.map((c) => c.sub.id)).toEqual(["syncer"]);
   });
 
   it("行が空なら何もしない", async () => {
     await addSub("s1");
     const { send, calls } = recordingSender();
-    await sendPending(env.DB, send, [], new Map(), null);
+    await sendPending(env.DB, send, [], new Map());
     expect(calls.length).toBe(0);
   });
 });

@@ -216,7 +216,7 @@ export async function handleSync(req: Request, env: Env, ctx: ExecutionContext):
         author: cur.author, answered: cur.answered,
       });
     }
-    ctx.waitUntil(sendPending(env.DB, makeSender(env), due, notesById, body.selfEndpoint ?? null));
+    ctx.waitUntil(sendPending(env.DB, makeSender(env), due, notesById));
   }
   return Response.json(res);
 }
