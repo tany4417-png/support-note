@@ -91,8 +91,13 @@ export async function sendPending(
   for (const n of planNotifications(rows, notesById, subs)) {
     const payload = JSON.stringify({ noteId: n.noteId, title: n.title });
     for (const sub of subs) {
-      if (n.exclude.has(sub.endpoint)) continue;
+      if (n.exclude.has(sub.endpoint)) {
+        console.log(`[notify] skip(excluded) sub=${sub.id} note=${n.noteId}`);
+        continue;
+      }
       const res = await send(sub, payload).catch(() => ({ ok: false as const, status: 0 }));
+      // 診断用（2026-07-26〜。7/30の導入後に外す）。本文はログに出さない
+      console.log(`[notify] sent sub=${sub.id} note=${n.noteId} ok=${res.ok} status=${res.status ?? "-"}`);
       if (!res.ok && (res.status === 404 || res.status === 410)) {
         // DELETE自体の失敗（D1の一時エラー等）でループを中断させない。消し損ねた行は
         // 次回以降の送信失敗時に再度DELETEが試みられるため、ここでは握りつぶして継続する

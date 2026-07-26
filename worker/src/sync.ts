@@ -204,7 +204,9 @@ export async function handleSync(req: Request, env: Env, ctx: ExecutionContext):
     ],
     purgedIds,
   };
+  console.log(`[sync] client=${pctx.clientId ?? "none"} actor=${pctx.actorName ?? "none"} editing=${pctx.editingNoteId ?? "none"} suppress=${suppressNotify} selfEp=${pctx.selfEndpoint ? pctx.selfEndpoint.slice(-12) : "none"} notes=${(body.notes ?? []).length}`);
   const due = await claimDuePending(env.DB, now);
+  console.log(`[sync] claimed=${due.length}${due.length > 0 ? " kinds=" + due.map((r) => r.kinds).join(",") : ""}`);
   if (due.length > 0) {
     // 見出しは確定後の本文から作る。実体が消えていればtitle_hintを使う（sendPending内で分岐）
     const notesById = new Map<string, NoteRecord>();
